@@ -15,28 +15,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Expand source archive
+        if: ${{ hashFiles('V5.1.33-.zip') != '' }}
+        run: |
+          rm -rf _source
+          unzip -q V5.1.33-.zip -d _source
+          cp -R _source/. .
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-
-      - name: Expand source archive
-        if: ${{ hashFiles('V5.1.33-CAGHT6-DUZELTILMIS-KAYNAK-KOD.zip') != '' }}
-        run: |
-          unzip -q V5.1.33-CAGHT6-DUZELTILMIS-KAYNAK-KOD.zip -d _source
-          cp -R _source/. .
+          cache-read-only: false
 
       - name: Validate Android project
         run: |
           test -f settings.gradle.kts
           test -f app/build.gradle.kts
+          test -f build.gradle.kts
 
       - name: Run unit tests
         run: gradle test --no-daemon
