@@ -40,11 +40,29 @@ jobs:
           test -f app/build.gradle.kts
           test -f build.gradle.kts
 
+      - name: Prepare CI build configuration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/build.gradle.kts')
+          s = p.read_text()
+          old = '''            check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n            signingConfig = signingConfigs.getByName("releaseSecure")'''
+          new = '''            val isReleaseTaskRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }\n            if (isReleaseTaskRequested) {\n                check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n                signingConfig = signingConfigs.getByName("releaseSecure")\n            }'''
+          if old not in s:
+              raise SystemExit('Expected signing block not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Run unit tests
         run: gradle test --no-daemon
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
+
+      - name: Verify APK
+        run: |
+          test -s app/build/outputs/apk/debug/*.apk
+          ls -lh app/build/outputs/apk/debug/*.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
