@@ -54,7 +54,7 @@ jobs:
 
           strings = Path('app/src/main/res/values/strings.xml')
           text = strings.read_text()
-          text = text.replace('\\n', '&#10;')
+          text = text.replace(chr(92) + 'n', '&#10;')
           strings.write_text(text)
 
           for name in ('item_bist_watchlist.xml', 'item_viop_opportunity.xml'):
