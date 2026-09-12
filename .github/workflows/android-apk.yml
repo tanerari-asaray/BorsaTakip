@@ -55,6 +55,10 @@ jobs:
           strings = Path('app/src/main/res/values/strings.xml')
           text = strings.read_text()
           text = text.replace(chr(92) + 'n', '&#10;')
+          slash = chr(92)
+          text = text.replace("TradingView'a", "TradingView" + slash + "'a")
+          text = text.replace("TradingView'dan", "TradingView" + slash + "'dan")
+          text = text.replace("TRADINGVIEW'DA", "TRADINGVIEW" + slash + "'DA")
           strings.write_text(text)
 
           for name in ('item_bist_watchlist.xml', 'item_viop_opportunity.xml'):
