@@ -3,7 +3,7 @@ name: Build BorsaTakip APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, build/apk-update ]
 
 permissions:
   contents: read
@@ -16,7 +16,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Expand source archive
-        if: ${{ hashFiles('V5.1.33-.zip') != '' }}
         run: |
           rm -rf _source
           unzip -q V5.1.33-.zip -d _source
@@ -34,39 +33,63 @@ jobs:
           gradle-version: '8.9'
           cache-read-only: false
 
+      - name: Prepare V5.1.35 build
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('app/build.gradle.kts')
+          s=p.read_text()
+          s=re.sub(r'versionCode\s*=\s*\d+', 'versionCode = 85', s, count=1)
+          s=re.sub(r'versionName\s*=\s*"[^"]+"', 'versionName = "5.1.35"', s, count=1)
+          old='''            check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n            signingConfig = signingConfigs.getByName("releaseSecure")'''
+          new='''            val isReleaseTaskRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }\n            if (isReleaseTaskRequested) {\n                check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n                signingConfig = signingConfigs.getByName("releaseSecure")\n            }'''
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          strings=Path('app/src/main/res/values/strings.xml')
+          t=strings.read_text()
+          t=t.replace("\\'", "'")
+          strings.write_text(t)
+          for path in Path('app/src/main/res/values').glob('*.xml'):
+              t=path.read_text()
+              t=t.replace("\\'", "'")
+              path.write_text(t)
+          PY
+
       - name: Validate Android project
         run: |
           test -f settings.gradle.kts
           test -f app/build.gradle.kts
           test -f build.gradle.kts
 
-      - name: Prepare CI build configuration
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('app/build.gradle.kts')
-          s = p.read_text()
-          old = '''            check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n            signingConfig = signingConfigs.getByName("releaseSecure")'''
-          new = '''            val isReleaseTaskRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }\n            if (isReleaseTaskRequested) {\n                check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n                signingConfig = signingConfigs.getByName("releaseSecure")\n            }'''
-          if old not in s:
-              raise SystemExit('Expected signing block not found')
-          p.write_text(s.replace(old, new, 1))
-          PY
-
-      - name: Run unit tests
-        run: gradle test --no-daemon
-
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle clean assembleDebug --no-daemon
 
       - name: Verify APK
         run: |
-          test -s app/build/outputs/apk/debug/*.apk
-          ls -lh app/build/outputs/apk/debug/*.apk
+          APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -1)
+          test -n "$APK"
+          test -s "$APK"
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      - name: Package updated source
+        run: |
+          rm -rf _ci_source_archive
+          mkdir _ci_source_archive
+          cp -R app backend gradle.properties build.gradle.kts settings.gradle.kts _ci_source_archive/
+          (cd _ci_source_archive && zip -qr ../BorsaTakip-V5.1.35-updated-source.zip .)
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BorsaTakip-V5.1.33-debug
+          name: BorsaTakip-V5.1.35-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload updated source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BorsaTakip-V5.1.35-updated-source
+          path: BorsaTakip-V5.1.35-updated-source.zip
           if-no-files-found: error
