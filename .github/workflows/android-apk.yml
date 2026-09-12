@@ -51,6 +51,18 @@ jobs:
           if old not in s:
               raise SystemExit('Expected signing block not found')
           p.write_text(s.replace(old, new, 1))
+
+          strings = Path('app/src/main/res/values/strings.xml')
+          text = strings.read_text()
+          text = text.replace('\\\\n', '&#10;')
+          strings.write_text(text)
+
+          for name in ('item_bist_watchlist.xml', 'item_viop_opportunity.xml'):
+              layout = Path('app/src/main/res/layout') / name
+              value = layout.read_text()
+              value = value.replace('android:textSize="9sp"', 'android:textSize="12sp"')
+              value = value.replace('android:textSize="10sp"', 'android:textSize="12sp"')
+              layout.write_text(value)
           PY
 
       - name: Run unit tests
