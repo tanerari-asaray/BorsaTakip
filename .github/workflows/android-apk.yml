@@ -3,7 +3,7 @@ name: Build BorsaTakip APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, build/apk-update ]
 
 permissions:
   contents: read
@@ -57,16 +57,31 @@ jobs:
         run: gradle test --no-daemon
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle clean assembleDebug --no-daemon
 
       - name: Verify APK
         run: |
           test -s app/build/outputs/apk/debug/*.apk
           ls -lh app/build/outputs/apk/debug/*.apk
+          sha256sum app/build/outputs/apk/debug/*.apk
+
+      - name: Package updated source
+        run: |
+          rm -rf _ci_source_archive
+          mkdir _ci_source_archive
+          cp -R app backend gradle.properties build.gradle.kts settings.gradle.kts _ci_source_archive/
+          (cd _ci_source_archive && zip -qr ../BorsaTakip-V5.1.33-updated-source.zip .)
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: BorsaTakip-V5.1.33-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload updated source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BorsaTakip-V5.1.33-updated-source
+          path: BorsaTakip-V5.1.33-updated-source.zip
           if-no-files-found: error
