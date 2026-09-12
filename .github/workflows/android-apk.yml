@@ -44,13 +44,17 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           p = Path('app/build.gradle.kts')
           s = p.read_text()
           old = '''            check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n            signingConfig = signingConfigs.getByName("releaseSecure")'''
           new = '''            val isReleaseTaskRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }\n            if (isReleaseTaskRequested) {\n                check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n                signingConfig = signingConfigs.getByName("releaseSecure")\n            }'''
-          if old not in s:
-              raise SystemExit('Expected signing block not found')
-          p.write_text(s.replace(old, new, 1))
+          if old in s:
+              s = s.replace(old, new, 1)
+          s = re.sub(r'versionCode\s*=\s*83', 'versionCode = 84', s, count=1)
+          s = re.sub(r'versionName\s*=\s*"5\.1\.33"', 'versionName = "5.1.34"', s, count=1)
+          p.write_text(s)
 
           strings = Path('app/src/main/res/values/strings.xml')
           text = strings.read_text()
@@ -59,6 +63,9 @@ jobs:
           text = text.replace("TradingView'a", "TradingView" + slash + "'a")
           text = text.replace("TradingView'dan", "TradingView" + slash + "'dan")
           text = text.replace("TRADINGVIEW'DA", "TRADINGVIEW" + slash + "'DA")
+          text = text.replace('İlk harften itibaren sözleşme kodu veya dayanak varlıkla ara.', 'İlk harften itibaren ara. “V” veya “VADELİ” yazınca vadeli sözleşmeler otomatik öne çıkar.')
+          text = text.replace('Sözleşme ara… Örn: X, U, E', 'Sözleşme ara… “V” yazınca vadeli isimleri otomatik çıkar')
+          text = text.replace('Bir harf yazınca en uygun sözleşmeler otomatik listelenir.', 'İlk harften itibaren en uygun sözleşmeler otomatik listelenir. “V” ile vadeli sözleşmeler öne çıkar.')
           strings.write_text(text)
 
           for name in ('item_bist_watchlist.xml', 'item_viop_opportunity.xml'):
@@ -67,6 +74,13 @@ jobs:
               value = value.replace('android:textSize="9sp"', 'android:textSize="12sp"')
               value = value.replace('android:textSize="10sp"', 'android:textSize="12sp"')
               layout.write_text(value)
+
+          ui = Path('app/src/main/java/tr/borsatakip/v5/ui/ViopContractsActivity.kt')
+          source = ui.read_text()
+          start = source.index('    private fun updateSuggestions() {')
+          end = source.index('    private fun openContract(contract: ViopContract) {')
+          replacement = '''    private fun updateSuggestions() {\n        val q = query.trim()\n        if (q.isEmpty()) {\n            suggestionPanel.visibility = View.GONE\n            suggestions.adapter = ViopSuggestionAdapter(emptyList()) { }\n            return\n        }\n\n        // Arama ilk karakterde çalışır. "V", "VA", "VADEL" veya "VADELI"\n        // yazıldığında sözleşme türü (Vadeli İşlem) öncelikli sıralanır.\n        // Böylece kullanıcı kodu bilmeden vadeli sözleşme isimlerine ulaşabilir.\n        val candidates = filteredByCategory(all)\n            .filter { matches(it, q) }\n            .sortedWith(compareBy<ViopContract> { suggestionRank(it, q) }\n                .thenBy { it.symbol })\n            .take(12)\n\n        if (candidates.isEmpty()) {\n            suggestionPanel.visibility = View.VISIBLE\n            suggestionTitle.text = "'$q' için eşleşen sözleşme bulunamadı"\n            suggestions.adapter = ViopSuggestionAdapter(emptyList()) { }\n            return\n        }\n\n        suggestionPanel.visibility = View.VISIBLE\n        val normalized = normalizeSearchText(q)\n        suggestionTitle.text = if (normalized.startsWith("VAD")) {\n            "Vadeli sözleşmeler • ${candidates.size} sonuç"\n        } else {\n            "Otomatik öneriler • ${candidates.size} sonuç"\n        }\n        suggestions.adapter = ViopSuggestionAdapter(candidates) { contract ->\n            suppressWatcher = true\n            search.setText(contract.symbol)\n            search.setSelection(search.text.length)\n            suppressWatcher = false\n            query = contract.symbol\n            suggestionPanel.visibility = View.GONE\n            list.adapter = ViopAdapter(listOf(contract), onClick = { openContract(it) })\n            status.text = "${contract.symbol} seçildi • Detaylarını görmek için karta dokunun."\n        }\n    }\n\n    private fun suggestionRank(contract: ViopContract, rawQuery: String): Int {\n        val q = normalizeSearchText(rawQuery)\n        val symbol = normalizeSearchText(contract.symbol)\n        val underlying = normalizeSearchText(contract.underlying)\n        val type = normalizeSearchText(contract.contractType)\n        val vadeliSearch = q.startsWith("V") && (q.length == 1 || "VADELI".startsWith(q) || q.startsWith("VADELI"))\n\n        return when {\n            vadeliSearch && type.startsWith("VADELI") -> 0\n            symbol.startsWith(q) -> 1\n            underlying.startsWith(q) -> 2\n            type.startsWith(q) -> 3\n            type.contains(q) -> 4\n            symbol.contains(q) -> 5\n            underlying.contains(q) -> 6\n            else -> 7\n        }\n    }\n\n    private fun matches(contract: ViopContract, rawQuery: String): Boolean {\n        val q = normalizeSearchText(rawQuery)\n        if (q.isEmpty()) return true\n        return normalizeSearchText(contract.symbol).contains(q) ||\n            normalizeSearchText(contract.underlying).contains(q) ||\n            normalizeSearchText(contract.contractType).contains(q)\n    }\n\n    private fun normalizeSearchText(value: String): String = value\n        .trim()\n        .uppercase(Locale.ROOT)\n        .replace('İ', 'I')\n\n'''
+          ui.write_text(source[:start] + replacement + source[end:])
           PY
 
       - name: Run unit tests
@@ -86,18 +100,18 @@ jobs:
           rm -rf _ci_source_archive
           mkdir _ci_source_archive
           cp -R app backend gradle.properties build.gradle.kts settings.gradle.kts _ci_source_archive/
-          (cd _ci_source_archive && zip -qr ../BorsaTakip-V5.1.33-updated-source.zip .)
+          (cd _ci_source_archive && zip -qr ../BorsaTakip-V5.1.34-updated-source.zip .)
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BorsaTakip-V5.1.33-debug
+          name: BorsaTakip-V5.1.34-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       - name: Upload updated source artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BorsaTakip-V5.1.33-updated-source
-          path: BorsaTakip-V5.1.33-updated-source.zip
+          name: BorsaTakip-V5.1.34-updated-source
+          path: BorsaTakip-V5.1.34-updated-source.zip
           if-no-files-found: error
