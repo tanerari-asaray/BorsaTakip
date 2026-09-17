@@ -1,4 +1,4 @@
-name: Build BorsaTakip V5.2.5 B124 APK
+name: Build BorsaTakip V5.2.5 B124 CORRECTED-V4 DEBUG APK
 
 on:
   workflow_dispatch:
@@ -6,31 +6,18 @@ on:
     branches: [ main ]
 
 permissions:
-  contents: read
+  contents: write
+
+env:
+  BORSA_BACKEND_URL: ${{ vars.BORSA_BACKEND_URL }}
+  BORSA_PRODUCTION_BACKEND_URL: ${{ vars.BORSA_PRODUCTION_BACKEND_URL }}
 
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    env:
-      BORSA_BACKEND_URL: ${{ vars.BORSA_BACKEND_URL }}
-      BORSA_PRODUCTION_BACKEND_URL: ${{ vars.BORSA_PRODUCTION_BACKEND_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Expand base source archive
-        run: |
-          set -euo pipefail
-          test -f V5.1.33-.zip
-          rm -rf _source
-          unzip -q V5.1.33-.zip -d _source
-          cp -R _source/. .
-
-      - name: Apply B124 source fixes
-        run: |
-          set -euo pipefail
-          test -d ci/b124-overlay
-          cp -R ci/b124-overlay/. .
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -50,56 +37,111 @@ jobs:
           gradle-version: '8.11.1'
           cache-read-only: false
 
-      - name: Validate Android project
+      - name: Validate B124 V4 project
         run: |
           set -euo pipefail
-          test -f settings.gradle.kts
+          test -d app/src/main
+          test -d app/src/test
+          test -d app/src/androidTest
           test -f app/build.gradle.kts
+          test -f settings.gradle.kts
           test -f build.gradle.kts
           test -f gradle.properties
           test -f app/src/main/AndroidManifest.xml
 
-      - name: Bootstrap Gradle Wrapper when missing
+      - name: Bootstrap real Gradle Wrapper 8.11.1
         run: |
           set -euo pipefail
-          if [ ! -f ./gradlew ]; then
+          if [ ! -f ./gradlew ] || [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
             gradle --no-daemon wrapper --gradle-version 8.11.1 --distribution-type bin
           fi
           chmod +x ./gradlew
-          test -f ./gradlew
-          test -f gradle/wrapper/gradle-wrapper.properties
-          test -f gradle/wrapper/gradle-wrapper.jar
           ./gradlew --version
+          grep -q 'gradle-8.11.1-bin.zip' gradle/wrapper/gradle-wrapper.properties
 
-      - name: Build and test
+      - name: Clean
+        run: ./gradlew clean --stacktrace
+
+      - name: JVM unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Build DEBUG APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify APK metadata and integrity
         run: |
           set -euo pipefail
-          ./gradlew clean assembleDebug testDebugUnitTest --stacktrace
-
-      - name: Verify APK
-        run: |
-          set -euo pipefail
-          APK_PATH="$(find . -type f -path '*/build/outputs/apk/debug/*.apk' | head -n 1)"
+          APK_PATH="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
           test -n "$APK_PATH"
           test -s "$APK_PATH"
           mkdir -p artifacts
-          cp "$APK_PATH" "artifacts/V5-ARACI-KURUM-5.2.5-B124-debug-${GITHUB_RUN_NUMBER}.apk"
-          ls -lh artifacts/*.apk
-          echo "APK_PATH=$APK_PATH"
-
-      - name: Inspect APK metadata
-        run: |
-          set -euo pipefail
-          APK="$(find artifacts -type f -name '*.apk' | head -n 1)"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee artifacts/BADGING.txt
+          cp "$APK_PATH" artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk | tee artifacts/BADGING.txt
           grep -q "package: name='tr.borsatakip.v5'" artifacts/BADGING.txt
           grep -q "versionCode='124'" artifacts/BADGING.txt
           grep -q "versionName='5.2.5'" artifacts/BADGING.txt
+          sha256sum artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk | tee artifacts/SHA256.txt
+          zipinfo -t artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk
+          if command -v apksigner >/dev/null 2>&1; then
+            apksigner verify --verbose artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk | tee artifacts/APKSIGNER.txt
+          else
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk | tee artifacts/APKSIGNER.txt
+          fi
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk | tee artifacts/ZIPALIGN.txt
 
-      - name: Upload APK artifact
+      - name: Count and summarize tests
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          JVM_DISCOVERED="$(find app/src/test -type f -name '*.kt' -print0 | xargs -0 grep -hE '@Test' | wc -l || true)"
+          INST_DISCOVERED="$(find app/src/androidTest -type f -name '*.kt' -print0 | xargs -0 grep -hE '@Test' | wc -l || true)"
+          printf 'Static source test annotations: JVM=%s Android instrumentation=%s Total=%s\n' "$JVM_DISCOVERED" "$INST_DISCOVERED" "$((JVM_DISCOVERED+INST_DISCOVERED))" | tee artifacts/TEST-SOURCE-COUNT.txt
+
+      - name: GitHub build report
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          APK_FILE='artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk'
+          APK_SHA='NOT GENERATED'
+          APK_SIZE='NOT GENERATED'
+          if [ -f "$APK_FILE" ]; then
+            APK_SHA="$(sha256sum "$APK_FILE" | awk '{print $1}')"
+            APK_SIZE="$(stat -c '%s' "$APK_FILE") bytes"
+          fi
+          cat > artifacts/B124-V4-GITHUB-BUILD-REPORT.md <<EOF
+# B124 CORRECTED-V4 GitHub Build Report
+
+- repository: $GITHUB_REPOSITORY
+- branch/ref: $GITHUB_REF_NAME
+- commit SHA: $GITHUB_SHA
+- versionCode: 124
+- versionName: 5.2.5
+- JDK: 17
+- Gradle: 8.11.1
+
+## APK
+- file: $APK_FILE
+- size: $APK_SIZE
+- SHA-256: $APK_SHA
+
+## Instrumentation
+- status: NOT RUN (no emulator job configured in this workflow)
+
+## Production E2E
+- status: NOT RUN
+
+## Physical device
+- status: NOT RUN
+EOF
+          cat artifacts/B124-V4-GITHUB-BUILD-REPORT.md
+
+      - name: Upload real APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: BorsaTakip-V5.2.5-B124-debug
+          name: BorsaTakip-B124-CORRECTED-V4-debug
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
