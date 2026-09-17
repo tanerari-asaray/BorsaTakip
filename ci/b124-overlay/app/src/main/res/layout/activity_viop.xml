@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/bg_screen_gradient">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:clipToPadding="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingTop="18dp"
+            android:paddingBottom="22dp">
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                    <TextView style="@style/Title" android:text="@string/auto_text_1fdfcb14da" android:textSize="31sp" />
+                    <TextView style="@style/Sub" android:text="@string/auto_text_bbe10a4dbb" android:textSize="15sp" android:layout_marginTop="2dp" />
+                </LinearLayout>
+                <TextView android:layout_width="48dp" android:layout_height="48dp" android:gravity="center" android:text="@string/auto_text_ce42573ec5" android:textColor="@color/text_secondary" android:textSize="28sp" />
+                <TextView android:id="@+id/openSettings" android:layout_width="48dp" android:layout_height="48dp" android:gravity="center" android:text="@string/auto_text_4cc6349fe6" android:textColor="@color/text_secondary" android:textSize="28sp" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/providerCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:orientation="vertical" android:background="@drawable/bg_card_green" android:padding="14dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                    <TextView android:id="@+id/providerDot" android:layout_width="32dp" android:layout_height="32dp" android:gravity="center" android:text="@string/auto_text_67358530af" android:textColor="@color/green" android:textSize="22sp" />
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:id="@+id/providerTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/auto_text_7d2b7f583e" android:textColor="@color/green" android:textStyle="bold" android:textSize="18sp" />
+                        <TextView android:id="@+id/providerStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/auto_text_33510f1ce3" android:textColor="@color/text_secondary" android:textSize="12sp" android:maxLines="2" android:ellipsize="end" />
+                    </LinearLayout>
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:orientation="horizontal">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+                        <TextView style="@style/MetricLabel" android:text="@string/auto_text_e3ac0eca17" />
+                        <TextView android:id="@+id/providerLastUpdate" style="@style/MetricValue" android:text="@string/auto_text_e56aa084f4" android:textSize="15sp" />
+                    </LinearLayout>
+                    <View android:layout_width="1dp" android:layout_height="42dp" android:background="@color/stroke" />
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+                        <TextView style="@style/MetricLabel" android:text="@string/auto_text_596dcb673c" />
+                        <TextView android:id="@+id/providerDataAge" style="@style/MetricValue" android:text="@string/auto_text_e56aa084f4" android:textSize="15sp" />
+                    </LinearLayout>
+                    <View android:layout_width="1dp" android:layout_height="42dp" android:background="@color/stroke" />
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+                        <TextView style="@style/MetricLabel" android:text="@string/auto_text_58055b8965" />
+                        <TextView android:id="@+id/providerLatency" style="@style/MetricValue" android:text="@string/auto_text_e56aa084f4" android:textSize="15sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/heroCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:orientation="vertical" android:background="@drawable/bg_card" android:padding="16dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:id="@+id/heroTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_0d9c49f05f" android:textColor="@color/text_primary" android:textStyle="bold" android:textSize="20sp" />
+                        <TextView android:id="@+id/heroContract" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_988f5e0f79" android:textColor="#87AEDD" android:textSize="13sp" />
+                    </LinearLayout>
+                    <TextView android:id="@+id/heroExpiry" android:layout_width="wrap_content" android:layout_height="wrap_content" android:maxWidth="130dp" android:maxLines="1" android:ellipsize="end" android:background="@drawable/bg_chip" android:paddingHorizontal="12dp" android:paddingVertical="8dp" android:text="@string/auto_text_3c546255fe" android:textColor="@color/text_secondary" />
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:gravity="center_vertical">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:id="@+id/heroPrice" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/auto_text_e56aa084f4" android:textColor="@color/text_primary" android:textStyle="bold" android:textSize="34sp" />
+                        <TextView android:id="@+id/heroChange" android:layout_width="wrap_content" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_cab4919ebb" android:textColor="@color/text_secondary" android:textStyle="bold" android:textSize="17sp" />
+                    </LinearLayout>
+                    <tr.borsatakip.v5.ui.ViopSparklineView android:id="@+id/heroSparkline" android:layout_width="150dp" android:layout_height="86dp" android:padding="6dp" />
+                </LinearLayout>
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="@color/stroke_soft" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <TextView android:id="@+id/metricOpen" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_bc9ec4de09" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                    <TextView android:id="@+id/metricHigh" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_21df8a2c1a" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                    <TextView android:id="@+id/metricLow" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_dff39fcc2f" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                    <TextView android:id="@+id/metricBid" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_324df37557" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                    <TextView android:id="@+id/metricAsk" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_bb3b75bd11" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:orientation="horizontal">
+                    <TextView android:id="@+id/metricVolume" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_ff95d10637" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                    <TextView android:id="@+id/metricOi" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_3dfce02231" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                    <TextView android:id="@+id/metricBasis" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_9be118217e" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:scrollbars="none">
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <Button android:id="@+id/openContracts" style="@style/ScanFilterButton" android:minWidth="128dp" android:text="@string/auto_text_e5c4861e2b" />
+                    <Button android:id="@+id/openAnalysis" style="@style/ScanFilterButton" android:minWidth="116dp" android:layout_marginStart="8dp" android:text="@string/auto_text_e8911ee5f4" />
+                    <Button android:id="@+id/openSignals" style="@style/ScanFilterButton" android:minWidth="126dp" android:layout_marginStart="8dp" android:text="@string/auto_text_a3623f8550" />
+                    <Button android:id="@+id/openExpiries" style="@style/ScanFilterButton" android:minWidth="116dp" android:layout_marginStart="8dp" android:text="@string/auto_text_a871007b9f" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:orientation="vertical" android:background="@drawable/bg_card" android:padding="14dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:minWidth="0dp" android:maxLines="1" android:ellipsize="end" android:includeFontPadding="false" android:text="@string/auto_text_a236ad0310" android:textColor="@color/text_primary" android:textStyle="bold" android:textSize="18sp" />
+                    <TextView android:id="@+id/signalSummary" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="0dp" android:maxWidth="150dp" android:maxLines="1" android:ellipsize="end" android:includeFontPadding="false" android:text="@string/auto_text_ba7bfde90b" android:textColor="@color/blue" android:textSize="12sp" />
+                </LinearLayout>
+                <androidx.recyclerview.widget.RecyclerView android:id="@+id/list" android:layout_width="match_parent" android:layout_height="330dp" android:layout_marginTop="10dp" android:clipToPadding="false" android:overScrollMode="never" />
+                <TextView android:id="@+id/emptySignals" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingVertical="18dp" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_275da4256d" android:textColor="@color/text_secondary" android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:orientation="vertical" android:background="@drawable/bg_card" android:padding="14dp">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_411a3548ee" android:textColor="@color/text_primary" android:textStyle="bold" android:textSize="18sp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:orientation="horizontal">
+                    <TextView android:id="@+id/marketContracts" android:layout_width="0dp" android:layout_height="72dp" android:layout_weight="1" android:layout_marginEnd="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_8d4c982c81" android:textColor="@color/text_secondary" />
+                    <TextView android:id="@+id/marketSignals" android:layout_width="0dp" android:layout_height="72dp" android:layout_weight="1" android:layout_marginHorizontal="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_7123dafa55" android:textColor="@color/text_secondary" />
+                    <TextView android:id="@+id/marketTrend" android:layout_width="0dp" android:layout_height="72dp" android:layout_weight="1" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:text="@string/auto_text_6ead1bd6d0" android:textColor="@color/text_secondary" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <Button android:id="@+id/refresh" android:layout_width="match_parent" android:layout_height="54dp" android:layout_marginTop="14dp" android:background="@drawable/bg_card_blue" android:textColor="@color/white" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_8de21801a7" />
+            <Button android:id="@+id/addContract" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="8dp" android:background="@drawable/bg_card" android:textColor="@color/blue" android:maxLines="1" android:ellipsize="end" android:text="@string/auto_text_9847f155ac" />
+            <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:background="@drawable/bg_card" android:padding="12dp" android:text="@string/auto_text_91e71dc509" android:textColor="@color/text_secondary" android:textSize="12sp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:background="@drawable/bg_chip" android:padding="12dp" android:maxLines="3" android:ellipsize="end" android:text="@string/auto_text_93dd27a6dc" android:textColor="@color/text_secondary" android:textSize="11sp" />
+        </LinearLayout>
+    </ScrollView>
+
+    <include layout="@layout/include_bottom_nav" />
+</LinearLayout>
