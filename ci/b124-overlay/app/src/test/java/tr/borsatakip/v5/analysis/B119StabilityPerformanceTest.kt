@@ -7,6 +7,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import tr.borsatakip.v5.data.MtfHistoryCache
+import tr.borsatakip.v5.data.ViopHistoryIntegrityPolicy
 import tr.borsatakip.v5.model.Candle
 
 class B119StabilityPerformanceTest {
@@ -61,12 +62,44 @@ class B119StabilityPerformanceTest {
         assertNotEquals(999.0, decision, 0.0001)
     }
 
+    @Test fun decisionPriceNeverFallsBackToLiveQuote() {
+        assertEquals(null, DecisionPricePolicy.historyBarPrice(emptyList()))
+    }
+
+    @Test fun viopHistoryExchangeTimestampRejectsStaleIntradayData() {
+        val now = System.currentTimeMillis()
+        assertTrue(ViopHistoryIntegrityPolicy.validateExchangeFreshness(now - 33 * 60_000L, now, "15m") != null)
+    }
+
+    @Test fun viopHistoryExchangeTimestampAcceptsFreshIntradayData() {
+        val now = System.currentTimeMillis()
+        assertEquals(null, ViopHistoryIntegrityPolicy.validateExchangeFreshness(now - 10 * 60_000L, now, "15m"))
+    }
+
+    @Test fun viopHistoryRejectsBackendClosedFlagWhenLastCandleIsActuallyOpen() {
+        val now = System.currentTimeMillis()
+        val openCandle = candle(0).copy(timestamp = now - 5 * 60_000L)
+        assertTrue(ViopHistoryIntegrityPolicy.validateLastBarClosed(listOf(openCandle), now, "15m") != null)
+    }
+
+    @Test fun viopHistoryAcceptsTimeBasedClosedLastCandle() {
+        val now = System.currentTimeMillis()
+        val closedCandle = candle(0).copy(timestamp = now - 16 * 60_000L)
+        assertEquals(null, ViopHistoryIntegrityPolicy.validateLastBarClosed(listOf(closedCandle), now, "15m"))
+    }
+
+    @Test fun viopDailyFreshnessAllowsWeekendGap() {
+        val friday = 1_767_343_200_000L
+        val monday = friday + 72L * 60L * 60L * 1000L
+        assertEquals(null, ViopHistoryIntegrityPolicy.validateExchangeFreshness(friday, monday, "1d"))
+    }
+
     @Test fun mtfCacheReturnsFreshEntryWithoutReloading() = runBlocking {
         var loads = 0
-        var now = aligned + 5 * 60_000L
+        var now = System.currentTimeMillis()
         val loader: suspend () -> List<Candle> = {
             loads += 1
-            listOf(candle(loads))
+            listOf(candle(loads).copy(timestamp = now - 60_000L))
         }
         val first = MtfHistoryCache.loadFresh("P", "THYAO", "1m", 1_000L, { now }, loader)
         now += 500L
@@ -75,16 +108,26 @@ class B119StabilityPerformanceTest {
         assertEquals(first, second)
     }
 
-    @Test fun decisionPriceHasNoLiveQuoteFallback() {
-        assertEquals(null, DecisionPricePolicy.historyBarPrice(emptyList()))
+    @Test fun mtfCacheRejectsExchangeDataThatIsOlderThanItsFrameWindow() = runBlocking {
+        var now = System.currentTimeMillis()
+        var loads = 0
+        val stale = listOf(candle(0, 1).copy(timestamp = now - 3 * 60 * 60 * 1000L))
+        val fresh = listOf(candle(1, 1).copy(timestamp = now - 4 * 60 * 1000L))
+        val first = runCatching {
+            MtfHistoryCache.loadFresh("P", "XU030", "60m", 5 * 60_000L, { now }) { loads++; stale }
+        }
+        assertTrue(first.isFailure)
+        val second = MtfHistoryCache.loadFresh("P", "XU030", "60m", 5 * 60_000L, { now }) { loads++; fresh }
+        assertEquals(2, loads)
+        assertEquals(fresh, second)
     }
 
     @Test fun mtfCacheNeverReturnsExpiredEntryAsFresh() = runBlocking {
         var loads = 0
-        var now = aligned + 65 * 60_000L
+        var now = System.currentTimeMillis()
         val loader: suspend () -> List<Candle> = {
             loads += 1
-            listOf(candle(loads))
+            listOf(candle(loads).copy(timestamp = now - 60_000L))
         }
         val first = MtfHistoryCache.loadFresh("P", "GARAN", "60m", 1_000L, { now }, loader)
         now += 1_001L
