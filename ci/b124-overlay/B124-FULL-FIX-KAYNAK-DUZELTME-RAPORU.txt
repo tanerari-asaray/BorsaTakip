@@ -1,0 +1,52 @@
+B124 PATCHED FULL-FIX – KAYNAK KOD DÜZELTME RAPORU
+Sürüm: V5.2.5 / versionCode 124 – CORRECTED-V4
+
+BU RAPOR YALNIZCA KAYNAK KODDA FİİLEN UYGULANAN DEĞİŞİKLİKLERİ BELİRTİR.
+BUILD/APK/CİHAZ/CANLI BACKEND SONUCU VARMIŞ GİBİ RAPORLANMAZ.
+
+1. UYGULANAN VİOP HISTORY DÜZELTMELERİ
+- Backend history cevabında symbol zorunlu ve istenen sembolle birebir eşleşmelidir.
+- Backend history cevabında interval zorunlu ve istenen interval ile eşleşmelidir.
+- Backend history cevabında lastBarClosed=true zorunludur.
+- Backend history cevabında exchangeTimestamp veya lastExchangeTimestamp pozitif olmalıdır.
+- Mum kayıtları timestamp bakımından zaten kesin artan sırada olmalıdır; yanlış sıra sessizce düzeltilmez.
+- Duplicate timestamp kabul edilmez.
+- Geçersiz OHLCV kayıtları sessizce elenmez; bütün history reddedilir.
+
+2. MTF CACHE
+- Cache artık yalnız loadedAt değil lastExchangeTimestamp üzerinden de freshness kontrolü yapar.
+- Gelecek tarihli exchange timestamp reddedilir.
+- Exchange verisi timeframe penceresine göre stale ise cache kabul edilmez.
+- Günlük MTF freshness için hafta sonu/resmî tatil kaynaklı boşluklara karşı dört takvim güne kadar kontrollü tolerans uygulanır.
+- MTF cache bozuk OHLCV verisini sessizce temizlemez; bozuk kayıt varsa cache kabul edilmez.
+- Cache'e boş, duplicate veya kronolojik olmayan history yazılmaz.
+
+3. MERKEZİ TARAMA ORKESTRASYONU
+- ScanOrchestrator eklendi.
+- VİOP taraması ve BIST taraması UI/worker girişlerinden canonical orchestrator üzerinden çalışacak şekilde bağlandı.
+
+4. MERKEZİ TARAMA TELEMETRİSİ
+- ScanProfile ve ScanTelemetry eklendi.
+- VİOP için contracts, market_data, analysis ve ranking süreleri kaydedilir.
+- BIST için merkezi toplam scan profili kaydedilir.
+
+5. TESTLER
+- ViopHistoryIntegrityPolicyTest eklendi.
+- MTF exchange freshness testi eklendi; 15 dakikalık freshness sınırının altında kalan 31 dakikalık veri yerine 33 dakikalık veri kullanılarak test sözleşmesi policy ile uyumlu hâle getirildi.
+- VİOP son mum için backend lastBarClosed beyanına ek bağımsız timestamp + interval kapanış kontrolü eklendi.
+- VİOP scan processed sayacı yalnız terminal sonuçları sayacak şekilde düzeltildi.
+- VİOP sözleşme evreni hata/boş dönüşlerinde ScanTelemetry kaydı eklendi.
+- MTF cache hit/miss sayaçları gerçek cache akışına bağlandı.
+- Toplam statik @Test metodu: 286 (283 JVM + 3 Android instrumentation). Bu sayı yalnızca kaynak dosyalarındaki @Test anotasyonlarının statik sayımıdır; çalıştırılmış test sayısı değildir.
+- B119 MTF testlerindeki loader ve freshness beklentileri policy ile uyumlu hâle getirilmiştir.
+
+6. HENÜZ DOĞRULANMAYANLAR
+- Gradle build sonucu GitHub Actions üzerinde gerçek çalıştırma ile doğrulanmalıdır.
+- APK ancak başarılı Gradle assembleDebug sonucundan sonra geçerli kabul edilir.
+- 286 testin tamamı çalıştırılmış kabul edilmez.
+- Gerçek Production Backend E2E yapılmadı.
+- Fiziksel Android cihaz testi yapılmadı.
+- Tek HTTP çağrısında çoklu timeframe backend endpoint'i uygulanmadı; backend sözleşmesi doğrulanmadan istemciye uydurma endpoint eklenmedi.
+
+7. KAYNAK TESLİM SINIRI
+Bu paket kaynak kod düzeltmesidir. APK veya canlı bağlantı başarısı iddiası içermez.
