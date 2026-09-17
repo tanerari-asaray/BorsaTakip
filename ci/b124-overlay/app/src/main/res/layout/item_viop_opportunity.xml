@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:layout_marginEnd="12dp"
+    android:orientation="vertical"
+    android:background="@drawable/bg_card"
+    android:padding="14dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+        <TextView android:id="@+id/viopSymbol" android:layout_width="wrap_content" android:layout_height="wrap_content" android:maxWidth="126dp" android:maxLines="1" android:ellipsize="end" android:includeFontPadding="false" android:textColor="@color/text_primary" android:textStyle="bold" android:textSize="16sp" />
+        <TextView android:id="@+id/viopClass" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:minWidth="0dp" android:maxLines="1" android:ellipsize="end" android:gravity="center" android:includeFontPadding="false" android:background="@drawable/bg_chip" android:paddingHorizontal="9dp" android:paddingVertical="5dp" android:textColor="@color/text_secondary" android:textStyle="bold" android:textSize="12sp" />
+    </LinearLayout>
+    <TextView android:id="@+id/viopSubtitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:ellipsize="end" android:textColor="@color/text_secondary" android:textSize="12sp" />
+    <TextView android:id="@+id/viopDirection" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:maxLines="1" android:ellipsize="end" android:textStyle="bold" android:textSize="20sp" />
+    <TextView android:id="@+id/viopScores" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:textColor="@color/text_primary" android:textSize="13sp" android:lineSpacingExtra="3dp" />
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="10dp" android:background="@color/stroke_soft" />
+    <TextView android:id="@+id/viopLevels" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/text_secondary" android:textSize="12sp" android:lineSpacingExtra="3dp" />
+    <TextView android:id="@+id/viopReason" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="9dp" android:textColor="@color/text_secondary" android:textSize="11sp" android:maxLines="3" android:ellipsize="end" />
+    <TextView android:id="@+id/viopDetailButton" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="12dp" android:gravity="center" android:maxLines="1" android:ellipsize="end" android:background="@drawable/bg_card_blue" android:text="@string/auto_text_f05ef0278e" android:textColor="@color/white" android:textStyle="bold" />
+</LinearLayout>
