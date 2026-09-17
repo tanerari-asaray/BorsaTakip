@@ -26,8 +26,19 @@ android {
             ?.trim()
             ?.removeSuffix("/")
             .orEmpty()
-        check(configuredBackendUrl.isBlank() || configuredBackendUrl.startsWith("https://")) {
-            "BORSA_BACKEND_URL/BORSA_PRODUCTION_BACKEND_URL yalnız HTTPS bir Production Backend URL olmalıdır."
+        if (configuredBackendUrl.isNotBlank()) {
+            val parsedBackendUrl = runCatching { java.net.URI(configuredBackendUrl) }.getOrElse {
+                error("BORSA_BACKEND_URL/BORSA_PRODUCTION_BACKEND_URL geçerli bir URI olmalıdır.")
+            }
+            check(
+                parsedBackendUrl.isAbsolute &&
+                    parsedBackendUrl.scheme.equals("https", ignoreCase = true) &&
+                    !parsedBackendUrl.host.isNullOrBlank() &&
+                    parsedBackendUrl.userInfo == null &&
+                    parsedBackendUrl.fragment == null
+            ) {
+                "BORSA_BACKEND_URL/BORSA_PRODUCTION_BACKEND_URL yalnız güvenli HTTPS ve geçerli host içeren bir Production Backend URL olmalıdır."
+            }
         }
         val escapedBackendUrl = configuredBackendUrl
             .replace("\\", "\\\\")

@@ -61,13 +61,9 @@ class B119StabilityPerformanceTest {
         assertNotEquals(999.0, decision, 0.0001)
     }
 
-    @Test fun decisionPriceHasNoLiveQuoteFallback() {
-        assertEquals(null, DecisionPricePolicy.historyBarPrice(emptyList()))
-    }
-
     @Test fun mtfCacheReturnsFreshEntryWithoutReloading() = runBlocking {
         var loads = 0
-        var now = 10_000L
+        var now = aligned + 5 * 60_000L
         val loader: suspend () -> List<Candle> = {
             loads += 1
             listOf(candle(loads))
@@ -79,9 +75,13 @@ class B119StabilityPerformanceTest {
         assertEquals(first, second)
     }
 
+    @Test fun decisionPriceHasNoLiveQuoteFallback() {
+        assertEquals(null, DecisionPricePolicy.historyBarPrice(emptyList()))
+    }
+
     @Test fun mtfCacheNeverReturnsExpiredEntryAsFresh() = runBlocking {
         var loads = 0
-        var now = 10_000L
+        var now = aligned + 65 * 60_000L
         val loader: suspend () -> List<Candle> = {
             loads += 1
             listOf(candle(loads))
