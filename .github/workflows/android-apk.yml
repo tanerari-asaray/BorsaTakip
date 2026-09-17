@@ -1,4 +1,4 @@
-name: Build BorsaTakip APK
+name: Build BorsaTakip V5.2.5 B124 APK
 
 on:
   workflow_dispatch:
@@ -11,62 +11,95 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+    env:
+      BORSA_BACKEND_URL: ${{ vars.BORSA_BACKEND_URL }}
+      BORSA_PRODUCTION_BACKEND_URL: ${{ vars.BORSA_PRODUCTION_BACKEND_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Expand source archive
-        if: ${{ hashFiles('V5.1.33-.zip') != '' }}
+      - name: Expand base source archive
         run: |
+          set -euo pipefail
+          test -f V5.1.33-.zip
           rm -rf _source
           unzip -q V5.1.33-.zip -d _source
           cp -R _source/. .
+
+      - name: Apply B124 source fixes
+        run: |
+          set -euo pipefail
+          test -d ci/b124-overlay
+          cp -R ci/b124-overlay/. .
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Set up Gradle 8.9
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
           cache-read-only: false
 
       - name: Validate Android project
         run: |
+          set -euo pipefail
           test -f settings.gradle.kts
           test -f app/build.gradle.kts
           test -f build.gradle.kts
+          test -f gradle.properties
+          test -f app/src/main/AndroidManifest.xml
 
-      - name: Prepare CI build configuration
+      - name: Bootstrap Gradle Wrapper when missing
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('app/build.gradle.kts')
-          s = p.read_text()
-          old = '''            check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n            signingConfig = signingConfigs.getByName("releaseSecure")'''
-          new = '''            val isReleaseTaskRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }\n            if (isReleaseTaskRequested) {\n                check(hasReleaseSigning) { "Release APK üretimi için güvenli imzalama değişkenleri zorunludur." }\n                signingConfig = signingConfigs.getByName("releaseSecure")\n            }'''
-          if old not in s:
-              raise SystemExit('Expected signing block not found')
-          p.write_text(s.replace(old, new, 1))
-          PY
+          set -euo pipefail
+          if [ ! -f ./gradlew ]; then
+            gradle --no-daemon wrapper --gradle-version 8.11.1 --distribution-type bin
+          fi
+          chmod +x ./gradlew
+          test -f ./gradlew
+          test -f gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/wrapper/gradle-wrapper.jar
+          ./gradlew --version
 
-      - name: Run unit tests
-        run: gradle test --no-daemon
-
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          ./gradlew clean assembleDebug testDebugUnitTest --stacktrace
 
       - name: Verify APK
         run: |
-          test -s app/build/outputs/apk/debug/*.apk
-          ls -lh app/build/outputs/apk/debug/*.apk
+          set -euo pipefail
+          APK_PATH="$(find . -type f -path '*/build/outputs/apk/debug/*.apk' | head -n 1)"
+          test -n "$APK_PATH"
+          test -s "$APK_PATH"
+          mkdir -p artifacts
+          cp "$APK_PATH" "artifacts/V5-ARACI-KURUM-5.2.5-B124-debug-${GITHUB_RUN_NUMBER}.apk"
+          ls -lh artifacts/*.apk
+          echo "APK_PATH=$APK_PATH"
+
+      - name: Inspect APK metadata
+        run: |
+          set -euo pipefail
+          APK="$(find artifacts -type f -name '*.apk' | head -n 1)"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee artifacts/BADGING.txt
+          grep -q "package: name='tr.borsatakip.v5'" artifacts/BADGING.txt
+          grep -q "versionCode='124'" artifacts/BADGING.txt
+          grep -q "versionName='5.2.5'" artifacts/BADGING.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BorsaTakip-V5.1.33-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: BorsaTakip-V5.2.5-B124-debug
+          path: artifacts/
           if-no-files-found: error
+          retention-days: 30
