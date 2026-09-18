@@ -1,43 +1,37 @@
-name: BorsaTakip V5.2.5 B124 CORRECTED-V4 Debug APK
+name: BorsaTakip V5.3.5 APK Build
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ v5.4.0-apk ]
 
 permissions:
   contents: read
 
 env:
-  GRADLE_VERSION: '8.11.1'
   JAVA_VERSION: '17'
   ANDROID_API: '35'
   BUILD_TOOLS: '35.0.0'
-  BORSA_BACKEND_URL: ${{ vars.BORSA_BACKEND_URL }}
-  BORSA_PRODUCTION_BACKEND_URL: ${{ vars.BORSA_PRODUCTION_BACKEND_URL }}
 
 jobs:
-  build-debug-apk:
+  build-v535:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout V5.3.5 source
         uses: actions/checkout@v4
 
-      - name: Expand B124 base source
+      - name: Validate V5.3.5 source
         shell: bash
         run: |
           set -euo pipefail
-          test -f V5.1.33-.zip
-          rm -rf _source
-          unzip -q V5.1.33-.zip -d _source
-          cp -R _source/. .
-
-      - name: Apply B124 CORRECTED-V4 overlay
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d ci/b124-overlay
-          cp -R ci/b124-overlay/. .
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f gradle.properties
+          test -f app/build.gradle.kts
+          test -f gradlew
+          grep -q 'versionCode = 535' app/build.gradle.kts
+          grep -q 'versionName = "5.3.5"' app/build.gradle.kts
+          grep -q 'namespace = "tr.borsatakip.v5"' app/build.gradle.kts
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -51,127 +45,64 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Set up Gradle 8.11.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.11.1'
-          cache-read-only: false
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
 
-      - name: Validate Android project
+      - name: Run V5.3.5 unit tests
+        run: ./gradlew clean testDebugUnitTest --stacktrace
+
+      - name: Build V5.3.5 debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
-          test -f settings.gradle.kts
-          test -f build.gradle.kts
-          test -f gradle.properties
-          test -f app/build.gradle.kts
-          test -f app/src/main/AndroidManifest.xml
-
-      - name: Bootstrap real Gradle Wrapper if missing
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f ./gradlew ]; then
-            gradle --no-daemon wrapper --gradle-version 8.11.1 --distribution-type bin
-          fi
-          chmod +x ./gradlew
-          test -s ./gradlew
-          test -s gradle/wrapper/gradle-wrapper.properties
-          test -s gradle/wrapper/gradle-wrapper.jar
-          ./gradlew --version
-
-      - name: Run clean build and JVM unit tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew clean
-          ./gradlew testDebugUnitTest --stacktrace
-          ./gradlew assembleDebug --stacktrace
-
-      - name: Verify APK exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK_PATH="$(find . -type f -path '*/build/outputs/apk/debug/*.apk' | head -n 1)"
-          test -n "$APK_PATH"
-          test -s "$APK_PATH"
+          APK="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          test -s "$APK"
           mkdir -p artifacts
-          cp "$APK_PATH" "artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk"
-          sha256sum "artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk" | tee artifacts/APK-SHA256.txt
+          cp "$APK" artifacts/BorsaTakip-V5.3.5-debug.apk
+          sha256sum artifacts/BorsaTakip-V5.3.5-debug.apk | tee artifacts/APK-SHA256.txt
 
       - name: Verify APK metadata and signature
         shell: bash
         run: |
           set -euo pipefail
-          APK="artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk"
+          APK="artifacts/BorsaTakip-V5.3.5-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
           "$AAPT" dump badging "$APK" | tee artifacts/APK-BADGING.txt
           grep -q "package: name='tr.borsatakip.v5'" artifacts/APK-BADGING.txt
-          grep -q "versionCode='124'" artifacts/APK-BADGING.txt
-          grep -q "versionName='5.2.5'" artifacts/APK-BADGING.txt
+          grep -q "versionCode='535'" artifacts/APK-BADGING.txt
+          grep -q "versionName='5.3.5'" artifacts/APK-BADGING.txt
           "$APKSIGNER" verify --verbose "$APK" | tee artifacts/APK-SIGNATURE.txt
-          "$ZIPALIGN" -c -v 4 "$APK" | tee artifacts/APK-ZIPALIGN.txt
 
-      - name: Count discovered source tests
+      - name: Build report
         shell: bash
         run: |
-          set -euo pipefail
-          JVM_COUNT="$(grep -Rho '@Test' app/src/test 2>/dev/null | wc -l | tr -d ' ')"
-          ANDROID_COUNT="$(grep -Rho '@Test' app/src/androidTest 2>/dev/null | wc -l | tr -d ' ')"
           {
-            echo "JVM static @Test count: ${JVM_COUNT}"
-            echo "Android instrumentation static @Test count: ${ANDROID_COUNT}"
-            echo "Static total: $((JVM_COUNT + ANDROID_COUNT))"
-          } | tee artifacts/TEST-STATIC-COUNT.txt
+            echo "# BorsaTakip V5.3.5 GitHub APK Build"
+            echo
+            echo "- Repository: tanerari-asaray/BorsaTakip"
+            echo "- Branch: v5.4.0-apk"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- versionCode: 535"
+            echo "- versionName: 5.3.5"
+            echo "- applicationId: tr.borsatakip.v5"
+            echo "- Build: assembleDebug"
+            echo "- Unit tests: testDebugUnitTest"
+            echo "- Physical device test: NOT RUN"
+            echo "- Production backend E2E: NOT RUN"
+            echo
+            echo "## SHA-256"
+            cat artifacts/APK-SHA256.txt
+          } | tee artifacts/V5.3.5-GITHUB-BUILD-REPORT.md
 
-      - name: Build verification report
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK="artifacts/BorsaTakip-V5.2.5-B124-CORRECTED-V4-debug.apk"
-          {
-            echo '# B124-V4 GitHub Build Report'
-            echo
-            echo '## Source'
-            echo '- Repository: tanerari-asaray/BorsaTakip'
-            echo '- Branch: main'
-            echo "- Commit SHA: ${GITHUB_SHA}"
-            echo '- versionCode: 124'
-            echo '- versionName: 5.2.5'
-            echo '- JDK: 17'
-            echo '- Gradle: 8.11.1'
-            echo
-            echo '## Unit Tests'
-            cat artifacts/TEST-STATIC-COUNT.txt
-            echo '- Executed: see Gradle test task result above'
-            echo
-            echo '## Instrumentation Tests'
-            echo '- NOT RUN in this APK job'
-            echo
-            echo '## APK'
-            echo "- File: $(basename "$APK")"
-            echo "- Size: $(stat -c%s "$APK") bytes"
-            echo "- SHA-256: $(cut -d' ' -f1 artifacts/APK-SHA256.txt)"
-            echo '- applicationId: tr.borsatakip.v5'
-            echo '- versionCode: 124'
-            echo '- versionName: 5.2.5'
-            echo '- Signing: DEBUG'
-            echo
-            echo '## Verification'
-            echo '- assembleDebug: PASS if this step executed'
-            echo '- APK metadata: PASS if this step executed'
-            echo '- APK signature: PASS if this step executed'
-            echo '- zipalign: PASS if this step executed'
-            echo '- Production backend E2E: NOT RUN'
-            echo '- Physical device test: NOT RUN'
-          } | tee artifacts/B124-V4-GITHUB-BUILD-REPORT.md
-
-      - name: Upload real APK artifact
+      - name: Upload V5.3.5 APK
         uses: actions/upload-artifact@v4
         with:
-          name: BorsaTakip-B124-CORRECTED-V4-debug
+          name: BorsaTakip-V5.3.5-debug
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
