@@ -77,10 +77,32 @@ jobs:
       - name: Run clean build and JVM unit tests
         shell: bash
         run: |
-          set -euo pipefail
-          gradle clean
-          gradle testDebugUnitTest --stacktrace
-          gradle assembleDebug --stacktrace
+          set -uo pipefail
+          mkdir -p artifacts
+          set +e
+          gradle clean 2>&1 | tee artifacts/gradle-clean.log
+          CLEAN_STATUS=${PIPESTATUS[0]}
+          gradle testDebugUnitTest --stacktrace 2>&1 | tee artifacts/gradle-test.log
+          TEST_STATUS=${PIPESTATUS[0]}
+          gradle assembleDebug --stacktrace 2>&1 | tee artifacts/gradle-assemble.log
+          BUILD_STATUS=${PIPESTATUS[0]}
+          {
+            echo "gradle clean exit: $CLEAN_STATUS"
+            echo "gradle testDebugUnitTest exit: $TEST_STATUS"
+            echo "gradle assembleDebug exit: $BUILD_STATUS"
+          } | tee artifacts/gradle-status.txt
+          if [ "$CLEAN_STATUS" -ne 0 ] || [ "$TEST_STATUS" -ne 0 ] || [ "$BUILD_STATUS" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload build diagnostics on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: BorsaTakip-build-diagnostics
+          path: artifacts/*.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify APK exists
         shell: bash
