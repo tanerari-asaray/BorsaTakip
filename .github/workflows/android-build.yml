@@ -52,7 +52,7 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Set up Gradle 8.11.1
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.11.1'
           cache-read-only: false
@@ -67,26 +67,20 @@ jobs:
           test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
 
-      - name: Bootstrap real Gradle Wrapper if missing
+      - name: Verify provisioned Gradle
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f ./gradlew ]; then
-            gradle --no-daemon wrapper --gradle-version 8.11.1 --distribution-type bin
-          fi
-          chmod +x ./gradlew
-          test -s ./gradlew
-          test -s gradle/wrapper/gradle-wrapper.properties
-          test -s gradle/wrapper/gradle-wrapper.jar
-          ./gradlew --version
+          command -v gradle
+          gradle --version
 
       - name: Run clean build and JVM unit tests
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew clean
-          ./gradlew testDebugUnitTest --stacktrace
-          ./gradlew assembleDebug --stacktrace
+          gradle clean
+          gradle testDebugUnitTest --stacktrace
+          gradle assembleDebug --stacktrace
 
       - name: Verify APK exists
         shell: bash
