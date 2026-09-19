@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ APP_NAME = "BorsaTakip Production Backend"
 UPSTREAM = os.getenv("TRADEWIZE_BASE_URL", "https://api.tradewize.com.tr").rstrip("/")
 APP_API_KEY = os.getenv("APP_API_KEY", "").strip()
 UPSTREAM_ACCESS_TOKEN = os.getenv("TRADEWIZE_ACCESS_TOKEN", "").strip()
+TRADEWIZE_API_KEY = os.getenv("TRADEWIZE_API_KEY", "").strip()
 MAX_AGE_MS = int(os.getenv("MAX_DATA_AGE_MS", "30000"))
 
 app = FastAPI(title=APP_NAME, version="1.0.0")
@@ -23,21 +25,73 @@ def require_app_auth(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="BACKEND_AUTH_INVALID")
 
 
-def upstream_headers() -> dict[str, str]:
-    if not UPSTREAM_ACCESS_TOKEN:
+_token_lock = asyncio.Lock()
+_cached_access_token = UPSTREAM_ACCESS_TOKEN
+_cached_access_token_expires_at = (time.time() + 300) if UPSTREAM_ACCESS_TOKEN else 0.0
+
+
+async def get_upstream_access_token(force_refresh: bool = False) -> str:
+    global _cached_access_token, _cached_access_token_expires_at
+
+    if not force_refresh and _cached_access_token and time.time() < _cached_access_token_expires_at - 60:
+        return _cached_access_token
+
+    if not TRADEWIZE_API_KEY:
+        if UPSTREAM_ACCESS_TOKEN:
+            return UPSTREAM_ACCESS_TOKEN
         raise HTTPException(status_code=503, detail="UPSTREAM_NOT_CONFIGURED")
-    return {
-        "Authorization": f"Bearer {UPSTREAM_ACCESS_TOKEN}",
-        "Accept": "application/json",
-        "User-Agent": "BorsaTakip-Production-Backend/1.0",
-    }
+
+    async with _token_lock:
+        if not force_refresh and _cached_access_token and time.time() < _cached_access_token_expires_at - 60:
+            return _cached_access_token
+
+        timeout = httpx.Timeout(15.0, connect=8.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{UPSTREAM}/oauth/token",
+                headers={
+                    "X-API-Key": TRADEWIZE_API_KEY,
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                json={"grant_type": "api_key"},
+            )
+        if response.status_code >= 400:
+            detail = response.text[:500]
+            raise HTTPException(status_code=502, detail=f"UPSTREAM_AUTH_HTTP_{response.status_code}: {detail}")
+
+        payload = response.json()
+        token = payload.get("access_token") if isinstance(payload, dict) else None
+        if not token:
+            raise HTTPException(status_code=502, detail="UPSTREAM_AUTH_RESPONSE_INVALID")
+
+        expires_in = payload.get("expires_in", 86400)
+        try:
+            expires_in = max(300, int(expires_in))
+        except (TypeError, ValueError):
+            expires_in = 86400
+
+        _cached_access_token = str(token)
+        _cached_access_token_expires_at = time.time() + expires_in
+        return _cached_access_token
 
 
 async def upstream_get(path: str, params: dict[str, Any] | None = None) -> httpx.Response:
-    headers = upstream_headers()
+    token = await get_upstream_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "User-Agent": "BorsaTakip-Production-Backend/1.0",
+    }
     timeout = httpx.Timeout(15.0, connect=8.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.get(f"{UPSTREAM}{path}", params=params, headers=headers)
+
+        if response.status_code == 401 and TRADEWIZE_API_KEY:
+            token = await get_upstream_access_token(force_refresh=True)
+            headers["Authorization"] = f"Bearer {token}"
+            response = await client.get(f"{UPSTREAM}{path}", params=params, headers=headers)
+
     if response.status_code >= 400:
         detail = response.text[:500]
         raise HTTPException(status_code=502, detail=f"UPSTREAM_HTTP_{response.status_code}: {detail}")
@@ -95,7 +149,7 @@ async def health(authorization: str | None = Header(default=None)):
     return {
         "ok": True,
         "service": APP_NAME,
-        "upstreamConfigured": bool(UPSTREAM_ACCESS_TOKEN),
+        "upstreamConfigured": bool(TRADEWIZE_API_KEY or UPSTREAM_ACCESS_TOKEN),
         "timestamp": int(time.time() * 1000),
     }
 
