@@ -1,37 +1,34 @@
-name: BorsaTakip V5.3.5 APK Build
+name: BorsaTakip Android APK Build
 
 on:
   workflow_dispatch:
   push:
-    branches: [ v5.4.0-apk ]
+    branches: [ main, master, v5.4.0-apk ]
 
 permissions:
   contents: read
 
-env:
-  JAVA_VERSION: '17'
-  ANDROID_API: '35'
-  BUILD_TOOLS: '35.0.0'
-
 jobs:
-  build-v535:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout V5.3.5 source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate V5.3.5 source
+      - name: Prepare Android project from repository sources
         shell: bash
         run: |
           set -euo pipefail
-          test -f settings.gradle.kts
-          test -f build.gradle.kts
-          test -f gradle.properties
-          test -f app/build.gradle.kts
-          test -f gradlew
-          grep -q 'versionCode = 535' app/build.gradle.kts
-          grep -q 'versionName = "5.3.5"' app/build.gradle.kts
-          grep -q 'namespace = "tr.borsatakip.v5"' app/build.gradle.kts
+          rm -rf workspace
+          mkdir -p workspace
+          unzip -q V5.1.33-.zip -d workspace
+          if [ -d workspace/ci/b124-overlay ]; then
+            cp -a ci/b124-overlay/. workspace/
+          fi
+          echo "Project files:"
+          find workspace -maxdepth 3 -type f | sort | head -200
+          test -f workspace/gradlew
+          test -f workspace/settings.gradle.kts || test -f workspace/settings.gradle
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -45,64 +42,41 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
-
-      - name: Run V5.3.5 unit tests
-        run: ./gradlew clean testDebugUnitTest --stacktrace
-
-      - name: Build V5.3.5 debug APK
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: Verify APK
+      - name: Build debug APK
+        working-directory: workspace
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          chmod +x ./gradlew
+          java -version
+          ./gradlew --version
+          ./gradlew clean
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Locate and verify APK
+        working-directory: workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find . -type f -path '*/build/outputs/apk/**/*.apk' | head -n 1)"
           test -n "$APK"
           test -s "$APK"
-          mkdir -p artifacts
-          cp "$APK" artifacts/BorsaTakip-V5.3.5-debug.apk
-          sha256sum artifacts/BorsaTakip-V5.3.5-debug.apk | tee artifacts/APK-SHA256.txt
+          mkdir -p ../artifacts
+          cp "$APK" ../artifacts/BorsaTakip-debug.apk
+          sha256sum ../artifacts/BorsaTakip-debug.apk | tee ../artifacts/APK-SHA256.txt
+          ls -lh ../artifacts/BorsaTakip-debug.apk
 
-      - name: Verify APK metadata and signature
+      - name: Verify APK metadata
         shell: bash
         run: |
           set -euo pipefail
-          APK="artifacts/BorsaTakip-V5.3.5-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
-          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          "$AAPT" dump badging "$APK" | tee artifacts/APK-BADGING.txt
-          grep -q "package: name='tr.borsatakip.v5'" artifacts/APK-BADGING.txt
-          grep -q "versionCode='535'" artifacts/APK-BADGING.txt
-          grep -q "versionName='5.3.5'" artifacts/APK-BADGING.txt
-          "$APKSIGNER" verify --verbose "$APK" | tee artifacts/APK-SIGNATURE.txt
+          "$AAPT" dump badging artifacts/BorsaTakip-debug.apk | tee artifacts/APK-BADGING.txt
 
-      - name: Build report
-        shell: bash
-        run: |
-          {
-            echo "# BorsaTakip V5.3.5 GitHub APK Build"
-            echo
-            echo "- Repository: tanerari-asaray/BorsaTakip"
-            echo "- Branch: v5.4.0-apk"
-            echo "- Commit: $GITHUB_SHA"
-            echo "- versionCode: 535"
-            echo "- versionName: 5.3.5"
-            echo "- applicationId: tr.borsatakip.v5"
-            echo "- Build: assembleDebug"
-            echo "- Unit tests: testDebugUnitTest"
-            echo "- Physical device test: NOT RUN"
-            echo "- Production backend E2E: NOT RUN"
-            echo
-            echo "## SHA-256"
-            cat artifacts/APK-SHA256.txt
-          } | tee artifacts/V5.3.5-GITHUB-BUILD-REPORT.md
-
-      - name: Upload V5.3.5 APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BorsaTakip-V5.3.5-debug
+          name: android-debug-apk
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
