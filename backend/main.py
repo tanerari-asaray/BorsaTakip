@@ -297,6 +297,230 @@ async def viop_history(
     }
 
 
+SCANNER_SYMBOLS = os.getenv(
+    "SCANNER_SYMBOLS",
+    "THYAO,ASELS,AKBNK,EREGL,SISE,TUPRS,BIMAS,KCHOL,SAHOL,TCELL,PGSUS,TOASO,FROTO,GARAN,ISCTR,YKBNK,HALKB,VAKBN,KOZAL,KOZAA",
+)
+SCANNER_MAX_SYMBOLS = int(os.getenv("SCANNER_MAX_SYMBOLS", "30"))
+
+
+def scanner_symbols(raw: str | None) -> list[str]:
+    source = raw if raw is not None else SCANNER_SYMBOLS
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in source.split(","):
+        safe = item.strip().upper()
+        if not safe or len(safe) > 32 or safe in seen:
+            continue
+        seen.add(safe)
+        result.append(safe)
+        if len(result) >= SCANNER_MAX_SYMBOLS:
+            break
+    return result
+
+
+def _ema(values: list[float], period: int) -> float:
+    if not values:
+        return 0.0
+    period = max(1, min(period, len(values)))
+    seed = sum(values[:period]) / period
+    multiplier = 2.0 / (period + 1)
+    value = seed
+    for price in values[period:]:
+        value = (price - value) * multiplier + value
+    return value
+
+
+def _rsi(values: list[float], period: int = 14) -> float:
+    if len(values) <= period:
+        return 50.0
+    gains = []
+    losses = []
+    for i in range(1, len(values)):
+        delta = values[i] - values[i - 1]
+        gains.append(max(delta, 0.0))
+        losses.append(max(-delta, 0.0))
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
+        avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _atr_percent(bars: list[dict[str, Any]], period: int = 14) -> float:
+    if len(bars) < 2:
+        return 0.0
+    trs: list[float] = []
+    for i, bar in enumerate(bars):
+        high = float(bar["high"])
+        low = float(bar["low"])
+        if i == 0:
+            trs.append(max(0.0, high - low))
+            continue
+        previous_close = float(bars[i - 1]["close"])
+        trs.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
+    window = trs[-min(period, len(trs)):]
+    close = float(bars[-1]["close"])
+    return (sum(window) / len(window)) / close * 100.0 if close > 0 else 0.0
+
+
+def _scan_from_bars(symbol: str, bars: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(bars) < 30:
+        return None
+
+    closes = [float(x["close"]) for x in bars]
+    volumes = [float(x.get("volume", 0.0)) for x in bars]
+    last = bars[-1]
+    price = closes[-1]
+    daily_change = ((price / closes[-2]) - 1.0) * 100.0 if closes[-2] else 0.0
+    ema20 = _ema(closes, 20)
+    ema50 = _ema(closes, 50)
+    rsi14 = _rsi(closes, 14)
+    atr_pct = _atr_percent(bars, 14)
+
+    recent_volumes = volumes[-21:-1]
+    avg_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0.0
+    volume_available = avg_volume > 0 and volumes[-1] >= 0
+    volume_ratio = volumes[-1] / avg_volume if avg_volume > 0 else None
+
+    trend_component = 35.0 if ema20 > ema50 else -35.0 if ema20 < ema50 else 0.0
+    momentum_component = max(-30.0, min(30.0, daily_change * 6.0))
+    rsi_component = max(-20.0, min(20.0, (rsi14 - 50.0) * 0.8))
+    price_component = 15.0 if price > ema20 else -15.0
+    raw_score = max(-100.0, min(100.0, trend_component + momentum_component + rsi_component + price_component))
+
+    latest_ts = normalize_timestamp(last.get("timestamp", last.get("timestampMs", last.get("time", 0))))
+    realtime, delay = freshness(latest_ts)
+
+    confidence = 0
+    confidence += 25 if realtime else 0
+    confidence += 20 if len(bars) >= 60 else 12
+    confidence += 15 if price > 0 else 0
+    confidence += 15
+    confidence += 15
+    confidence += 10 if volume_available else 0
+
+    threshold = 45.0 if confidence >= 80 else 55.0 if confidence >= 60 else 999.0
+    if confidence < 40:
+        decision = "INVALID"
+        verification = "BLOCKED"
+    elif abs(raw_score) >= threshold:
+        decision = "LONG" if raw_score > 0 else "SHORT"
+        verification = "VERIFIED_OPPORTUNITY"
+    else:
+        decision = "WATCH"
+        verification = "WATCH"
+
+    return {
+        "symbol": symbol,
+        "underlying": symbol,
+        "decision": decision,
+        "signal": decision,
+        "verificationStatus": verification,
+        "score": round(raw_score, 2),
+        "signalScore": round(raw_score, 2),
+        "dataConfidence": confidence,
+        "dataConfidenceBand": "NORMAL" if confidence >= 80 else "DEGRADED" if confidence >= 60 else "LOW" if confidence >= 40 else "BLOCKED",
+        "riskCoveragePercent": 75 if volume_available else 65,
+        "penalty": 0.0,
+        "currentPrice": price,
+        "price": price,
+        "dailyChangePct": round(daily_change, 4),
+        "volume": volumes[-1],
+        "openInterest": None,
+        "ema20": round(ema20, 6),
+        "ema50": round(ema50, 6),
+        "rsi14": round(rsi14, 4),
+        "atrPct": round(atr_pct, 4),
+        "volumeRatio": round(volume_ratio, 4) if volume_ratio is not None else None,
+        "dataTimestamp": latest_ts,
+        "exchangeTimestamp": latest_ts,
+        "delaySeconds": delay,
+        "realtime": realtime,
+        "currentSessionIncluded": realtime,
+        "lastBarClosed": True,
+        "source": "TradeWize",
+        "engineVersion": "V5.3.2",
+        "mode": "REMOTE",
+        "calculationVersion": "V5.3.2",
+    }
+
+
+@app.get("/v1/scanner/opportunities")
+async def scanner_opportunities(
+    symbols: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+):
+    require_app_auth(authorization)
+    requested = scanner_symbols(symbols)
+    if not requested:
+        raise HTTPException(status_code=400, detail="SCANNER_ERROR: Tarama sembol listesi boş.")
+
+    opportunities: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+
+    for symbol in requested:
+        try:
+            response = await upstream_get(
+                "/api/v1/market-data/bars",
+                {"symbol": symbol, "interval": "1D", "countBack": 120, "includeOpenBar": "false"},
+            )
+            payload = unwrap_json(response.json())
+            if isinstance(payload, dict):
+                bars = payload.get("bars", payload.get("items", []))
+            elif isinstance(payload, list):
+                bars = payload
+            else:
+                bars = []
+
+            normalized_bars: list[dict[str, Any]] = []
+            for bar in bars:
+                if not isinstance(bar, dict):
+                    continue
+                try:
+                    o = float(bar.get("open"))
+                    h = float(bar.get("high"))
+                    l = float(bar.get("low"))
+                    c = float(bar.get("close"))
+                    v = float(bar.get("volume", 0))
+                except (TypeError, ValueError):
+                    continue
+                ts = normalize_timestamp(bar.get("timestamp", bar.get("timestampMs", bar.get("time", bar.get("openTimeUnix", 0)))))
+                if ts <= 0 or min(o, h, l, c) <= 0 or v < 0:
+                    continue
+                normalized_bars.append({"timestamp": ts, "open": o, "high": h, "low": l, "close": c, "volume": v})
+
+            normalized_bars.sort(key=lambda x: x["timestamp"])
+            item = _scan_from_bars(symbol, normalized_bars)
+            if item is not None:
+                opportunities.append(item)
+            else:
+                failures.append({"symbol": symbol, "reason": "INSUFFICIENT_HISTORY"})
+        except HTTPException as exc:
+            failures.append({"symbol": symbol, "reason": str(exc.detail)})
+        except Exception as exc:
+            failures.append({"symbol": symbol, "reason": f"SCANNER_SYMBOL_ERROR: {type(exc).__name__}"})
+
+    opportunities.sort(key=lambda x: abs(float(x["score"])), reverse=True)
+    return {
+        "items": opportunities,
+        "opportunities": opportunities,
+        "engineVersion": "V5.3.2",
+        "mode": "REMOTE",
+        "source": "TradeWize",
+        "receivedAt": int(time.time() * 1000),
+        "scannedSymbols": len(requested),
+        "returnedCount": len(opportunities),
+        "failedCount": len(failures),
+        "failures": failures,
+        "providerReady": len(opportunities) > 0,
+    }
+
+
 @app.get("/v1/news")
 async def news(
     category: str = "ALL",
