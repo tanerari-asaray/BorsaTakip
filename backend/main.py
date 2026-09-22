@@ -256,6 +256,31 @@ async def bist_quote(symbol: str, authorization: str | None = Header(default=Non
     }
 
 
+
+async def discover_viop_quotes(force: bool = False) -> list[dict[str, Any]]:
+    response = await upstream_get(
+        "/api/v1/market-data/viop/last-price/details",
+        {"all": "true"},
+    )
+    records = _unwrap_symbol_map(response.json())
+    items: list[dict[str, Any]] = []
+    for symbol, raw in records.items():
+        if not isinstance(symbol, str):
+            continue
+        normalized = extract_price_record(symbol, raw)
+        if normalized["price"] <= 0:
+            continue
+        items.append({
+            **normalized,
+            "market": "VIOP",
+            "assetType": "FUTURE",
+            "name": symbol.upper(),
+            "underlying": symbol.upper(),
+        })
+    items.sort(key=lambda x: x["symbol"])
+    return items
+
+
 async def provider_capabilities(force: bool = False) -> dict[str, Any]:
     now = time.time()
     if (
@@ -293,19 +318,9 @@ async def provider_capabilities(force: bool = False) -> dict[str, Any]:
         result["errors"].append({"market": "BIST", "reason": str(exc.detail)})
 
     try:
-        viop_response = await upstream_get(
-            "/api/v1/market-data/viop/last-price/details",
-            {"all": "true"},
-        )
-        viop_records = _unwrap_symbol_map(viop_response.json())
-        viop_usable = []
-        viop_live = []
-        for symbol, raw in viop_records.items():
-            normalized = extract_price_record(str(symbol), raw)
-            if normalized["price"] > 0:
-                viop_usable.append(normalized)
-                if normalized["realtime"]:
-                    viop_live.append(normalized)
+        viop = await discover_viop_quotes()
+        viop_usable = viop
+        viop_live = [x for x in viop if x["realtime"]]
         result["markets"]["VIOP"] = {
             "supported": True,
             "discovery": True,
@@ -691,6 +706,11 @@ async def scanner_opportunities(
         raise HTTPException(status_code=400, detail="SCANNER_ERROR: Geçersiz assetType.")
 
     if market == "BIST":
+        await discover_bist_quotes()
+    elif market == "VIOP":
+        viop_universe = await discover_viop_quotes()
+        _bist_cache["items"] = viop_universe
+    elif market == "ALL":
         await discover_bist_quotes()
 
     requested, remaining = scanner_symbols(
