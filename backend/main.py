@@ -13,6 +13,11 @@ APP_API_KEY = os.getenv("APP_API_KEY", "").strip()
 UPSTREAM_ACCESS_TOKEN = os.getenv("TRADEWIZE_ACCESS_TOKEN", "").strip()
 TRADEWIZE_API_KEY = os.getenv("TRADEWIZE_API_KEY", "").strip()
 MAX_AGE_MS = int(os.getenv("MAX_DATA_AGE_MS", "30000"))
+DEFAULT_SCAN_INTERVAL = os.getenv("SCANNER_INTERVAL", "5m").strip() or "5m"
+SCANNER_HISTORY_BARS = int(os.getenv("SCANNER_HISTORY_BARS", "120"))
+SCANNER_BATCH_SIZE = int(os.getenv("SCANNER_BATCH_SIZE", "60"))
+CAPABILITY_CACHE_SECONDS = int(os.getenv("CAPABILITY_CACHE_SECONDS", "10"))
+SUPPORTED_SCAN_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "60m", "240m", "1D"}
 
 app = FastAPI(title=APP_NAME, version="1.0.0")
 
@@ -152,6 +157,193 @@ async def health(authorization: str | None = Header(default=None)):
         "upstreamConfigured": bool(TRADEWIZE_API_KEY or UPSTREAM_ACCESS_TOKEN),
         "timestamp": int(time.time() * 1000),
     }
+
+
+
+_bist_cache: dict[str, Any] = {"at": 0.0, "items": []}
+_capability_cache: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+def _unwrap_symbol_map(payload: Any) -> dict[str, Any]:
+    value = unwrap_json(payload)
+    return value if isinstance(value, dict) else {}
+
+
+async def discover_bist_quotes(force: bool = False) -> list[dict[str, Any]]:
+    now = time.time()
+    if not force and _bist_cache["items"] and now - float(_bist_cache["at"]) < 1.0:
+        return list(_bist_cache["items"])
+
+    response = await upstream_get(
+        "/api/v1/market-data/last-price/details",
+        {"all": "true"},
+    )
+    records = _unwrap_symbol_map(response.json())
+    items: list[dict[str, Any]] = []
+    for symbol, raw in records.items():
+        if not isinstance(symbol, str):
+            continue
+        normalized = extract_price_record(symbol, raw)
+        items.append({
+            **normalized,
+            "market": "BIST",
+            "assetType": "STOCK",
+            "name": symbol.upper(),
+        })
+    items.sort(key=lambda x: x["symbol"])
+    _bist_cache["at"] = now
+    _bist_cache["items"] = items
+    return list(items)
+
+
+@app.get("/v1/bist/symbols")
+async def bist_symbols(authorization: str | None = Header(default=None)):
+    require_app_auth(authorization)
+    items = await discover_bist_quotes()
+    usable = [x for x in items if float(x.get("price", 0) or 0) > 0]
+    return {
+        "items": [
+            {
+                "symbol": x["symbol"],
+                "name": x["name"],
+                "market": "BIST",
+                "assetType": "STOCK",
+                "price": x["price"],
+                "dataTimestamp": x["timestamp"],
+                "realtime": x["realtime"],
+                "delaySeconds": x["delaySeconds"],
+            }
+            for x in items
+        ],
+        "symbolCount": len(items),
+        "usableCount": len(usable),
+        "source": "TradeWize",
+        "receivedAt": int(time.time() * 1000),
+    }
+
+
+@app.get("/v1/bist/quote/{symbol}")
+async def bist_quote(symbol: str, authorization: str | None = Header(default=None)):
+    require_app_auth(authorization)
+    safe = symbol.strip().upper()
+    if not safe or len(safe) > 64:
+        raise HTTPException(status_code=400, detail="BIST_QUOTE_ERROR: Geçersiz sembol.")
+
+    response = await upstream_get(
+        "/api/v1/market-data/last-price/details",
+        {"symbols": safe},
+    )
+    records = _unwrap_symbol_map(response.json())
+    if safe not in records:
+        raise HTTPException(status_code=404, detail="BIST_QUOTE_ERROR: Sembol bulunamadı.")
+
+    normalized = extract_price_record(safe, records[safe])
+    if normalized["price"] <= 0:
+        raise HTTPException(status_code=503, detail="BIST_QUOTE_ERROR: Kullanılabilir fiyat yok.")
+    if normalized["timestamp"] <= 0:
+        raise HTTPException(status_code=503, detail="BIST_QUOTE_ERROR: Fiyat zaman damgası yok.")
+
+    return {
+        "symbol": safe,
+        "price": normalized["price"],
+        "exchangeTimestamp": normalized["timestamp"],
+        "receivedAt": int(time.time() * 1000),
+        "source": "TradeWize",
+        "realtime": normalized["realtime"],
+        "delaySeconds": normalized["delaySeconds"],
+        "currentSessionIncluded": normalized["currentSessionIncluded"],
+        "providerReady": normalized["realtime"],
+    }
+
+
+async def provider_capabilities(force: bool = False) -> dict[str, Any]:
+    now = time.time()
+    if (
+        not force
+        and _capability_cache["value"] is not None
+        and now - float(_capability_cache["at"]) < CAPABILITY_CACHE_SECONDS
+    ):
+        return dict(_capability_cache["value"])
+
+    result: dict[str, Any] = {
+        "provider": "TradeWize",
+        "providerConfigured": bool(TRADEWIZE_API_KEY or UPSTREAM_ACCESS_TOKEN),
+        "providerReady": False,
+        "multiMarketReady": False,
+        "checkedAt": int(time.time() * 1000),
+        "markets": {},
+        "errors": [],
+    }
+
+    try:
+        bist = await discover_bist_quotes(force=force)
+        bist_usable = [x for x in bist if float(x.get("price", 0) or 0) > 0]
+        bist_live = [x for x in bist_usable if x.get("realtime")]
+        result["markets"]["BIST"] = {
+            "supported": True,
+            "discovery": True,
+            "symbolCount": len(bist),
+            "usableCount": len(bist_usable),
+            "liveCount": len(bist_live),
+            "realtime": bool(bist_live),
+            "ready": bool(bist_live),
+        }
+    except HTTPException as exc:
+        result["markets"]["BIST"] = {"supported": True, "ready": False, "error": str(exc.detail)}
+        result["errors"].append({"market": "BIST", "reason": str(exc.detail)})
+
+    try:
+        viop_response = await upstream_get(
+            "/api/v1/market-data/viop/last-price/details",
+            {"all": "true"},
+        )
+        viop_records = _unwrap_symbol_map(viop_response.json())
+        viop_usable = []
+        viop_live = []
+        for symbol, raw in viop_records.items():
+            normalized = extract_price_record(str(symbol), raw)
+            if normalized["price"] > 0:
+                viop_usable.append(normalized)
+                if normalized["realtime"]:
+                    viop_live.append(normalized)
+        result["markets"]["VIOP"] = {
+            "supported": True,
+            "discovery": True,
+            "symbolCount": len(viop_records),
+            "usableCount": len(viop_usable),
+            "liveCount": len(viop_live),
+            "realtime": bool(viop_live),
+            "ready": bool(viop_live),
+        }
+    except HTTPException as exc:
+        result["markets"]["VIOP"] = {"supported": True, "ready": False, "error": str(exc.detail)}
+        result["errors"].append({"market": "VIOP", "reason": str(exc.detail)})
+
+    for market in ("COMMODITY", "GOLD", "SILVER", "FX", "INDEX"):
+        result["markets"][market] = {
+            "supported": False,
+            "discovery": False,
+            "ready": False,
+            "reason": "UPSTREAM_ENDPOINT_NOT_DOCUMENTED",
+        }
+
+    result["multiMarketReady"] = bool(
+        result["markets"].get("BIST", {}).get("ready")
+        and result["markets"].get("VIOP", {}).get("ready")
+    )
+    result["providerReady"] = result["multiMarketReady"]
+    _capability_cache["at"] = now
+    _capability_cache["value"] = result
+    return result
+
+
+@app.get("/v1/provider/capabilities")
+async def provider_capabilities_endpoint(
+    force: bool = Query(False),
+    authorization: str | None = Header(default=None),
+):
+    require_app_auth(authorization)
+    return await provider_capabilities(force=force)
 
 
 @app.get("/v1/viop/contracts")
@@ -297,84 +489,79 @@ async def viop_history(
     }
 
 
-SCANNER_SYMBOLS = os.getenv(
-    "SCANNER_SYMBOLS",
-    "THYAO,ASELS,AKBNK,EREGL,SISE,TUPRS,BIMAS,KCHOL,SAHOL,TCELL,PGSUS,TOASO,FROTO,GARAN,ISCTR,YKBNK,HALKB,VAKBN,KOZAL,KOZAA",
-)
-SCANNER_MAX_SYMBOLS = int(os.getenv("SCANNER_MAX_SYMBOLS", "30"))
+
+SCANNER_SYMBOLS = os.getenv("SCANNER_SYMBOLS", "")
+SCANNER_MAX_SYMBOLS = int(os.getenv("SCANNER_MAX_SYMBOLS", "1000"))
+SCANNER_BATCH_SIZE = int(os.getenv("SCANNER_BATCH_SIZE", "60"))
 
 
-def scanner_symbols(raw: str | None) -> list[str]:
-    source = raw if raw is not None else SCANNER_SYMBOLS
+def scanner_symbols(raw: str | None, market: str = "BIST", offset: int = 0, limit: int | None = None) -> tuple[list[str], int]:
+    requested = (raw or "").strip()
+    if requested:
+        candidates = requested.split(",")
+    elif market == "BIST":
+        candidates = [x["symbol"] for x in _bist_cache.get("items", []) if isinstance(x, dict)]
+    else:
+        candidates = SCANNER_SYMBOLS.split(",") if SCANNER_SYMBOLS else []
+
     seen: set[str] = set()
     result: list[str] = []
-    for item in source.split(","):
+    for item in candidates:
         safe = item.strip().upper()
-        if not safe or len(safe) > 32 or safe in seen:
+        if not safe or len(safe) > 64 or safe in seen:
             continue
         seen.add(safe)
         result.append(safe)
-        if len(result) >= SCANNER_MAX_SYMBOLS:
-            break
-    return result
+
+    result = result[max(0, offset):]
+    cap = min(limit or SCANNER_BATCH_SIZE, SCANNER_MAX_SYMBOLS)
+    return result[:cap], max(0, len(result) - cap)
 
 
-def _ema(values: list[float], period: int) -> float:
-    if not values:
-        return 0.0
-    period = max(1, min(period, len(values)))
-    seed = sum(values[:period]) / period
-    multiplier = 2.0 / (period + 1)
-    value = seed
-    for price in values[period:]:
-        value = (price - value) * multiplier + value
-    return value
+def _normalize_bars(payload: Any) -> list[dict[str, Any]]:
+    value = unwrap_json(payload)
+    if isinstance(value, dict):
+        bars = value.get("bars", value.get("items", []))
+    elif isinstance(value, list):
+        bars = value
+    else:
+        bars = []
 
-
-def _rsi(values: list[float], period: int = 14) -> float:
-    if len(values) <= period:
-        return 50.0
-    gains = []
-    losses = []
-    for i in range(1, len(values)):
-        delta = values[i] - values[i - 1]
-        gains.append(max(delta, 0.0))
-        losses.append(max(-delta, 0.0))
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
-    for i in range(period, len(gains)):
-        avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
-        avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
-    if avg_loss == 0:
-        return 100.0 if avg_gain > 0 else 50.0
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
-
-
-def _atr_percent(bars: list[dict[str, Any]], period: int = 14) -> float:
-    if len(bars) < 2:
-        return 0.0
-    trs: list[float] = []
-    for i, bar in enumerate(bars):
-        high = float(bar["high"])
-        low = float(bar["low"])
-        if i == 0:
-            trs.append(max(0.0, high - low))
+    normalized: list[dict[str, Any]] = []
+    for bar in bars:
+        if not isinstance(bar, dict):
             continue
-        previous_close = float(bars[i - 1]["close"])
-        trs.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
-    window = trs[-min(period, len(trs)):]
-    close = float(bars[-1]["close"])
-    return (sum(window) / len(window)) / close * 100.0 if close > 0 else 0.0
+        try:
+            o = float(bar.get("open"))
+            h = float(bar.get("high"))
+            l = float(bar.get("low"))
+            c = float(bar.get("close"))
+            v = float(bar.get("volume", 0))
+        except (TypeError, ValueError):
+            continue
+        ts = normalize_timestamp(
+            bar.get("timestamp", bar.get("timestampMs", bar.get("time", bar.get("openTimeUnix", 0))))
+        )
+        if ts <= 0 or min(o, h, l, c) <= 0 or v < 0:
+            continue
+        normalized.append({
+            "timestamp": ts,
+            "open": o,
+            "high": h,
+            "low": l,
+            "close": c,
+            "volume": v,
+        })
+    normalized.sort(key=lambda x: x["timestamp"])
+    return normalized
 
 
-def _scan_from_bars(symbol: str, bars: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _scan_from_bars(symbol: str, bars: list[dict[str, Any]], interval: str, metadata: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if len(bars) < 30:
         return None
 
     closes = [float(x["close"]) for x in bars]
     volumes = [float(x.get("volume", 0.0)) for x in bars]
-    last = bars[-1]
     price = closes[-1]
     daily_change = ((price / closes[-2]) - 1.0) * 100.0 if closes[-2] else 0.0
     ema20 = _ema(closes, 20)
@@ -393,7 +580,7 @@ def _scan_from_bars(symbol: str, bars: list[dict[str, Any]]) -> dict[str, Any] |
     price_component = 15.0 if price > ema20 else -15.0
     raw_score = max(-100.0, min(100.0, trend_component + momentum_component + rsi_component + price_component))
 
-    latest_ts = normalize_timestamp(last.get("timestamp", last.get("timestampMs", last.get("time", 0))))
+    latest_ts = normalize_timestamp(bars[-1].get("timestamp"))
     realtime, delay = freshness(latest_ts)
 
     confidence = 0
@@ -415,9 +602,13 @@ def _scan_from_bars(symbol: str, bars: list[dict[str, Any]]) -> dict[str, Any] |
         decision = "WATCH"
         verification = "WATCH"
 
+    metadata = metadata or {}
     return {
         "symbol": symbol,
-        "underlying": symbol,
+        "name": metadata.get("name", symbol),
+        "market": metadata.get("market", "BIST"),
+        "assetType": metadata.get("assetType", "STOCK"),
+        "underlying": metadata.get("underlying", symbol),
         "decision": decision,
         "signal": decision,
         "verificationStatus": verification,
@@ -431,7 +622,7 @@ def _scan_from_bars(symbol: str, bars: list[dict[str, Any]]) -> dict[str, Any] |
         "price": price,
         "dailyChangePct": round(daily_change, 4),
         "volume": volumes[-1],
-        "openInterest": None,
+        "openInterest": metadata.get("openInterest"),
         "ema20": round(ema20, 6),
         "ema50": round(ema50, 6),
         "rsi14": round(rsi14, 4),
@@ -443,81 +634,129 @@ def _scan_from_bars(symbol: str, bars: list[dict[str, Any]]) -> dict[str, Any] |
         "realtime": realtime,
         "currentSessionIncluded": realtime,
         "lastBarClosed": True,
+        "timeframe": interval,
         "source": "TradeWize",
-        "engineVersion": "V5.3.2",
+        "engineVersion": "V5.4.13",
         "mode": "REMOTE",
-        "calculationVersion": "V5.3.2",
+        "calculationVersion": "V5.4.13",
     }
+
+
+async def _scan_symbol(symbol: str, interval: str, market: str) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        response = await upstream_get(
+            "/api/v1/market-data/bars",
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "countBack": SCANNER_HISTORY_BARS,
+                "includeOpenBar": "false",
+            },
+        )
+        bars = _normalize_bars(response.json())
+        metadata = {"market": market, "assetType": "STOCK" if market == "BIST" else "FUTURE"}
+        item = _scan_from_bars(symbol, bars, interval, metadata)
+        if item is None:
+            return None, "INSUFFICIENT_HISTORY"
+        return item, None
+    except HTTPException as exc:
+        return None, str(exc.detail)
+    except Exception as exc:
+        return None, f"SCANNER_SYMBOL_ERROR: {type(exc).__name__}"
 
 
 @app.get("/v1/scanner/opportunities")
 async def scanner_opportunities(
     symbols: str | None = Query(default=None),
+    market: str = Query("BIST"),
+    assetType: str = Query("STOCK"),
+    timeframe: str = Query(DEFAULT_SCAN_INTERVAL),
+    interval: str | None = Query(default=None),
+    limit: int = Query(60, ge=1, le=1000),
+    minScore: float = Query(0.0, ge=0.0, le=100.0),
+    includeWatch: bool = Query(True),
+    offset: int = Query(0, ge=0),
     authorization: str | None = Header(default=None),
 ):
     require_app_auth(authorization)
-    requested = scanner_symbols(symbols)
+    selected_interval = (interval or timeframe).strip()
+    if selected_interval not in SUPPORTED_SCAN_INTERVALS:
+        raise HTTPException(status_code=400, detail=f"SCANNER_ERROR: Desteklenmeyen timeframe: {selected_interval}")
+
+    market = market.strip().upper()
+    assetType = assetType.strip().upper()
+    if market not in {"BIST", "VIOP", "ALL"}:
+        raise HTTPException(status_code=400, detail="SCANNER_ERROR: Geçersiz market.")
+    if assetType not in {"STOCK", "FUTURE", "ALL"}:
+        raise HTTPException(status_code=400, detail="SCANNER_ERROR: Geçersiz assetType.")
+
+    if market == "BIST":
+        await discover_bist_quotes()
+
+    requested, remaining = scanner_symbols(
+        symbols,
+        "BIST" if market in {"BIST", "ALL"} else market,
+        offset,
+        limit,
+    )
+
     if not requested:
-        raise HTTPException(status_code=400, detail="SCANNER_ERROR: Tarama sembol listesi boş.")
+        return {
+            "items": [],
+            "opportunities": [],
+            "engineVersion": "V5.4.13",
+            "mode": "REMOTE",
+            "source": "TradeWize",
+            "receivedAt": int(time.time() * 1000),
+            "scannedSymbols": 0,
+            "universeCount": len(_bist_cache.get("items", [])) if market in {"BIST", "ALL"} else 0,
+            "remainingSymbols": 0,
+            "coverageComplete": True,
+            "timeframe": selected_interval,
+            "failures": [],
+            "failedCount": 0,
+            "providerReady": False,
+        }
 
     opportunities: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
+    semaphore = asyncio.Semaphore(2)
 
-    for symbol in requested:
-        try:
-            response = await upstream_get(
-                "/api/v1/market-data/bars",
-                {"symbol": symbol, "interval": "1D", "countBack": 120, "includeOpenBar": "false"},
+    async def run_one(symbol: str):
+        async with semaphore:
+            return symbol, await _scan_symbol(
+                symbol,
+                selected_interval,
+                "BIST" if market == "BIST" else market,
             )
-            payload = unwrap_json(response.json())
-            if isinstance(payload, dict):
-                bars = payload.get("bars", payload.get("items", []))
-            elif isinstance(payload, list):
-                bars = payload
-            else:
-                bars = []
 
-            normalized_bars: list[dict[str, Any]] = []
-            for bar in bars:
-                if not isinstance(bar, dict):
-                    continue
-                try:
-                    o = float(bar.get("open"))
-                    h = float(bar.get("high"))
-                    l = float(bar.get("low"))
-                    c = float(bar.get("close"))
-                    v = float(bar.get("volume", 0))
-                except (TypeError, ValueError):
-                    continue
-                ts = normalize_timestamp(bar.get("timestamp", bar.get("timestampMs", bar.get("time", bar.get("openTimeUnix", 0)))))
-                if ts <= 0 or min(o, h, l, c) <= 0 or v < 0:
-                    continue
-                normalized_bars.append({"timestamp": ts, "open": o, "high": h, "low": l, "close": c, "volume": v})
-
-            normalized_bars.sort(key=lambda x: x["timestamp"])
-            item = _scan_from_bars(symbol, normalized_bars)
-            if item is not None:
-                opportunities.append(item)
-            else:
-                failures.append({"symbol": symbol, "reason": "INSUFFICIENT_HISTORY"})
-        except HTTPException as exc:
-            failures.append({"symbol": symbol, "reason": str(exc.detail)})
-        except Exception as exc:
-            failures.append({"symbol": symbol, "reason": f"SCANNER_SYMBOL_ERROR: {type(exc).__name__}"})
+    results = await asyncio.gather(*(run_one(symbol) for symbol in requested))
+    for symbol, (item, error) in results:
+        if error:
+            failures.append({"symbol": symbol, "reason": error})
+        elif item is not None:
+            if includeWatch or item["decision"] in {"LONG", "SHORT"}:
+                if abs(float(item["score"])) >= minScore:
+                    opportunities.append(item)
 
     opportunities.sort(key=lambda x: abs(float(x["score"])), reverse=True)
+    capability = await provider_capabilities()
     return {
         "items": opportunities,
         "opportunities": opportunities,
-        "engineVersion": "V5.3.2",
+        "engineVersion": "V5.4.13",
         "mode": "REMOTE",
         "source": "TradeWize",
         "receivedAt": int(time.time() * 1000),
         "scannedSymbols": len(requested),
+        "universeCount": len(_bist_cache.get("items", [])) if market in {"BIST", "ALL"} else len(requested) + remaining,
         "returnedCount": len(opportunities),
-        "failedCount": len(failures),
+        "remainingSymbols": remaining,
+        "coverageComplete": remaining == 0,
+        "timeframe": selected_interval,
         "failures": failures,
-        "providerReady": len(opportunities) > 0,
+        "failedCount": len(failures),
+        "providerReady": bool(capability.get("providerReady")),
     }
 
 
