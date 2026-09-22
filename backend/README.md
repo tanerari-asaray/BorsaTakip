@@ -26,3 +26,18 @@ The Android V5 client therefore may display a contract as "İzleme/Yetersiz veri
 Backend, tercihen `TRADEWIZE_API_KEY` ile çalışır. Sunucu API anahtarını istemciye açmadan TradeWize `/oauth/token` üzerinden JWT access token alır ve süresi yaklaşınca yeniler. TradeWize dokümantasyonuna göre API anahtarı istemci tarafına gömülmemelidir.
 
 `APP_API_KEY` ise Android uygulamasının backend'e erişimini sınırlamak için ayrı bir uygulama sırrıdır. Bu değer de yalnızca Render ortam değişkeninde tutulmalıdır.
+
+
+### BIST Scanner
+
+The production backend now exposes:
+
+- GET /v1/scanner/opportunities
+- Optional query parameter: `symbols=THYAO,ASELS,...`
+- Default symbols are configured with `SCANNER_SYMBOLS`
+- The scanner uses closed daily OHLCV bars from TradeWize and computes deterministic EMA20/EMA50, RSI14, ATR%, momentum and data-confidence fields.
+- The response includes `engineVersion=V5.3.2`, `mode=REMOTE`, `decision`, `signalScore`, `dataConfidence`, `verificationStatus` and failure details.
+- No mock prices or fabricated market data are returned. If the upstream does not return usable bars, that symbol is reported under `failures`.
+
+The scanner is intentionally fail-closed for insufficient history and low data confidence. Closed daily bars should not be represented as live tick data; `realtime` and `delaySeconds` are derived from the upstream timestamp.
+
