@@ -28,16 +28,32 @@ Backend, tercihen `TRADEWIZE_API_KEY` ile çalışır. Sunucu API anahtarını i
 `APP_API_KEY` ise Android uygulamasının backend'e erişimini sınırlamak için ayrı bir uygulama sırrıdır. Bu değer de yalnızca Render ortam değişkeninde tutulmalıdır.
 
 
-### BIST Scanner
+### Dynamic market provider / scanner
 
 The production backend now exposes:
 
+- GET /v1/provider/capabilities
+- GET /v1/bist/symbols
+- GET /v1/bist/quote/{symbol}
 - GET /v1/scanner/opportunities
-- Optional query parameter: `symbols=THYAO,ASELS,...`
-- Default symbols are configured with `SCANNER_SYMBOLS`
-- The scanner uses closed daily OHLCV bars from TradeWize and computes deterministic EMA20/EMA50, RSI14, ATR%, momentum and data-confidence fields.
-- The response includes `engineVersion=V5.3.2`, `mode=REMOTE`, `decision`, `signalScore`, `dataConfidence`, `verificationStatus` and failure details.
-- No mock prices or fabricated market data are returned. If the upstream does not return usable bars, that symbol is reported under `failures`.
+- GET /v1/viop/contracts
+- GET /v1/viop/quote/{symbol}
 
-The scanner is intentionally fail-closed for insufficient history and low data confidence. Closed daily bars should not be represented as live tick data; `realtime` and `delaySeconds` are derived from the upstream timestamp.
+BIST discovery uses the documented TradeWize PAY last-price/details endpoint with `all=true`; the backend no longer treats the old 20-symbol list as the BIST universe. VİOP discovery uses the documented VİOP last-price/details endpoint with `all=true`. TradeWize documents these price endpoints as one request per second per product group, so the backend keeps discovery separate from the heavier historical-bar scan. citeturn0search0turn2search0
+
+The scanner accepts `market`, `assetType`, `timeframe`/ `interval`, `limit`, `offset`, `minScore` and `includeWatch`. The default scan timeframe is 5m. Historical bars are requested from the documented `/api/v1/market-data/bars` endpoint with `includeOpenBar=false`; live/open bars are a separate upstream capability. citeturn2search1
+
+The response reports `universeCount`, `scannedSymbols`, `remainingSymbols`, `coverageComplete`, `dataConfidence`, `verificationStatus`, `timeframe` and failure details. A partial batch is never represented as a complete full-market scan.
+
+### Live-data readiness
+
+`/v1/provider/capabilities` checks BIST and VİOP discovery plus whether usable prices have timestamps within `MAX_DATA_AGE_MS`. Therefore an old upstream price can still prove provider connectivity while correctly keeping `providerReady=false`.
+
+This distinction is intentional. TradeWize documents that last-price timestamps are the original price-event time and that old prices may be returned when no current record is available. Live Borsa İstanbul data is a separately licensed data service. citeturn0search0turn0search5
+
+### Commodity limitation
+
+The current documented TradeWize Developer API market-data group exposes PAY and VİOP price/bar endpoints; it does not document a generic gold/silver/commodity quote endpoint in the same group. The backend therefore reports COMMODITY/GOLD/SILVER/FX/INDEX as unsupported rather than inventing symbols or prices. When a real provider endpoint is available, it should be added as a separate adapter. citeturn0search1
+
+No mock prices or fabricated market data are returned.
 
