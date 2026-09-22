@@ -11,9 +11,17 @@ services:
       - key: TRADEWIZE_ACCESS_TOKEN
         sync: false
       - key: SCANNER_SYMBOLS
-        value: "THYAO,ASELS,AKBNK,EREGL,SISE,TUPRS,BIMAS,KCHOL,SAHOL,TCELL,PGSUS,TOASO,FROTO,GARAN,ISCTR,YKBNK,HALKB,VAKBN,KOZAL,KOZAA"
+        value: ""
       - key: SCANNER_MAX_SYMBOLS
-        value: "30"
+        value: "1000"
+      - key: SCANNER_BATCH_SIZE
+        value: "60"
+      - key: SCANNER_INTERVAL
+        value: "5m"
+      - key: SCANNER_HISTORY_BARS
+        value: "120"
+      - key: CAPABILITY_CACHE_SECONDS
+        value: "10"
       - key: APP_API_KEY
         sync: false
       - key: MAX_DATA_AGE_MS
