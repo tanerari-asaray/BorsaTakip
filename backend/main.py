@@ -149,6 +149,7 @@ def extract_price_record(symbol: str, raw: Any) -> dict[str, Any]:
 
 
 @app.get("/health")
+@app.get("/v1/health")
 async def health(authorization: str | None = Header(default=None)):
     require_app_auth(authorization)
     return {
@@ -200,9 +201,17 @@ async def discover_bist_quotes(force: bool = False) -> list[dict[str, Any]]:
 async def bist_symbols(authorization: str | None = Header(default=None)):
     require_app_auth(authorization)
     items = await discover_bist_quotes()
+    symbols = [x["symbol"] for x in items if x.get("symbol")]
     usable = [x for x in items if float(x.get("price", 0) or 0) > 0]
     return {
-        "items": [
+        # V5.4.13 Android contract: items is a plain string array and count
+        # must exactly equal items.length. Detailed provider data remains
+        # available under detailedItems for diagnostics/backward tooling.
+        "items": symbols,
+        "count": len(symbols),
+        "symbolCount": len(symbols),
+        "usableCount": len(usable),
+        "detailedItems": [
             {
                 "symbol": x["symbol"],
                 "name": x["name"],
@@ -215,8 +224,6 @@ async def bist_symbols(authorization: str | None = Header(default=None)):
             }
             for x in items
         ],
-        "symbolCount": len(items),
-        "usableCount": len(usable),
         "source": "TradeWize",
         "receivedAt": int(time.time() * 1000),
     }
@@ -488,6 +495,247 @@ async def viop_quote(symbol: str, authorization: str | None = Header(default=Non
         "realtime": normalized["realtime"],
         "delaySeconds": normalized["delaySeconds"],
         "currentSessionIncluded": normalized["currentSessionIncluded"],
+    }
+
+
+def _bar_timestamp_ms(bar: dict[str, Any]) -> int:
+    raw = bar.get("timestamp", bar.get("timestampMs", bar.get("time", bar.get("openTimeUnix", 0))))
+    ts = normalize_timestamp(raw)
+    if ts > 0:
+        return ts
+    for key in ("timeUtc", "openTimeUtc", "closeTimeUtc"):
+        value = bar.get(key)
+        if isinstance(value, str) and value.strip():
+            try:
+                return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+            except ValueError:
+                continue
+    return 0
+
+
+async def _fetch_bist_history(
+    symbol: str,
+    interval: str = "1d",
+    range_value: str = "1y",
+    from_ms: int | None = None,
+    to_ms: int | None = None,
+) -> list[dict[str, Any]]:
+    allowed = {"1m", "3m", "5m", "15m", "30m", "60m", "240m", "1d"}
+    if interval not in allowed:
+        raise HTTPException(status_code=400, detail="HISTORY_ERROR: Geçersiz interval.")
+
+    safe = symbol.strip().upper()
+    if not safe:
+        raise HTTPException(status_code=400, detail="HISTORY_ERROR: Geçersiz sembol.")
+
+    if interval == "1d":
+        upstream_interval = "1D"
+    else:
+        upstream_interval = interval
+
+    params: dict[str, Any] = {
+        "symbol": safe,
+        "interval": upstream_interval,
+        "includeOpenBar": "false",
+    }
+
+    if from_ms is not None and to_ms is not None:
+        params["fromUtc"] = datetime.fromtimestamp(from_ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        params["toUtc"] = datetime.fromtimestamp(to_ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    else:
+        try:
+            range_units = int(range_value[:-1])
+            unit = range_value[-1]
+        except (TypeError, ValueError):
+            range_units, unit = 1, "y"
+        if interval == "1d":
+            count_back = min(1000, max(50, range_units * (365 if unit == "y" else 30 if unit == "m" else 1)))
+        else:
+            count_back = min(1000, max(50, range_units * (240 if unit == "d" else 30 if unit == "m" else 5)))
+        params["countBack"] = count_back
+
+    response = await upstream_get("/api/v1/market-data/bars", params)
+    payload = unwrap_json(response.json())
+    bars = payload.get("bars", payload.get("items", [])) if isinstance(payload, dict) else payload if isinstance(payload, list) else []
+
+    candles: list[dict[str, Any]] = []
+    for bar in bars:
+        if not isinstance(bar, dict):
+            continue
+        ts = _bar_timestamp_ms(bar)
+        if ts <= 0:
+            continue
+        try:
+            o = float(bar.get("open"))
+            h = float(bar.get("high"))
+            l = float(bar.get("low"))
+            close = float(bar.get("close"))
+            v = float(bar.get("volume", 0))
+        except (TypeError, ValueError):
+            continue
+        if min(o, h, l, close) <= 0 or v < 0:
+            continue
+        candles.append({"timestamp": ts, "open": o, "high": h, "low": l, "close": close, "volume": v})
+
+    candles.sort(key=lambda x: x["timestamp"])
+    if not candles:
+        raise HTTPException(status_code=503, detail="INSUFFICIENT_HISTORY: Backend kapanmış BIST mum döndürmedi.")
+    return candles
+
+
+@app.get("/v1/bist/history/{symbol}")
+async def bist_history(
+    symbol: str,
+    range: str = Query("1y", pattern=r"^[0-9]+[dmy]$"),
+    interval: str = Query("1d"),
+    authorization: str | None = Header(default=None),
+):
+    require_app_auth(authorization)
+    candles = await _fetch_bist_history(symbol, interval, range)
+    safe = symbol.strip().upper()
+    return {
+        "symbol": safe,
+        "name": safe,
+        "market": "BIST",
+        "interval": interval,
+        "exchangeTimezone": "Europe/Istanbul",
+        "sessionId": None,
+        "currentSessionIncluded": False,
+        "lastBarClosed": True,
+        "lastBarTime": candles[-1]["timestamp"],
+        "lastBarTimestamp": candles[-1]["timestamp"],
+        "previousClose": candles[-2]["close"] if len(candles) >= 2 else None,
+        "candles": candles,
+    }
+
+
+@app.get("/v1/bist/history-window/{symbol}")
+async def bist_history_window(
+    symbol: str,
+    from_time: int = Query(..., alias="from"),
+    to_time: int = Query(..., alias="to"),
+    interval: str = Query("5m"),
+    authorization: str | None = Header(default=None),
+):
+    require_app_auth(authorization)
+    if from_time <= 0 or to_time <= from_time:
+        raise HTTPException(status_code=400, detail="HISTORY_ERROR: Geçersiz zaman aralığı.")
+    candles = await _fetch_bist_history(symbol, interval, from_ms=from_time, to_ms=to_time)
+    filtered = [x for x in candles if from_time <= x["timestamp"] <= to_time]
+    if not filtered:
+        raise HTTPException(status_code=503, detail="INSUFFICIENT_HISTORY: İstenen zaman aralığında kapanmış mum yok.")
+    return {
+        "symbol": symbol.strip().upper(),
+        "market": "BIST",
+        "interval": interval,
+        "exchangeTimezone": "Europe/Istanbul",
+        "lastBarClosed": True,
+        "lastBarTime": filtered[-1]["timestamp"],
+        "candles": filtered,
+    }
+
+
+@app.get("/v1/preflight")
+async def bist_preflight(authorization: str | None = Header(default=None)):
+    require_app_auth(authorization)
+    started = int(time.time() * 1000)
+    authentication = {"ok": bool(TRADEWIZE_API_KEY or UPSTREAM_ACCESS_TOKEN), "message": "TradeWize kimlik doğrulama yapılandırıldı." if (TRADEWIZE_API_KEY or UPSTREAM_ACCESS_TOKEN) else "TradeWize erişim anahtarı yapılandırılmamış."}
+    symbols = {"ok": False, "message": "BIST sembol evreni doğrulanmadı."}
+    history = {"ok": False, "message": "BIST history doğrulanmadı."}
+    quote = {"ok": False, "code": "UNAVAILABLE", "message": "BIST quote doğrulanmadı."}
+    symbol_count = 0
+    sample_symbol = None
+
+    try:
+        discovered = await discover_bist_quotes(force=True)
+        usable = [x for x in discovered if x.get("symbol") and float(x.get("price", 0) or 0) > 0]
+        symbol_count = len(discovered)
+        sample_symbol = usable[0]["symbol"] if usable else (discovered[0]["symbol"] if discovered else None)
+        symbols = {
+            "ok": symbol_count > 0,
+            "message": f"{symbol_count} BIST sembolü bulundu." if symbol_count > 0 else "BIST sembol evreni boş.",
+        }
+    except HTTPException as exc:
+        symbols["message"] = str(exc.detail)
+    except Exception as exc:
+        symbols["message"] = str(exc)
+
+    if sample_symbol:
+        try:
+            candles = await _fetch_bist_history(sample_symbol, "1d", "1y")
+            history = {
+                "ok": len(candles) >= 50,
+                "message": f"{len(candles)} kapanmış günlük mum doğrulandı.",
+                "lastBarTimestamp": candles[-1]["timestamp"],
+            }
+        except HTTPException as exc:
+            history["message"] = str(exc.detail)
+        except Exception as exc:
+            history["message"] = str(exc)
+
+        try:
+            record = next((x for x in discovered if x["symbol"] == sample_symbol), None)
+            if record and record["price"] > 0 and record["timestamp"] > 0 and record["realtime"]:
+                quote = {
+                    "ok": True,
+                    "code": "NONE",
+                    "message": "BIST quote güncel ve seans içi.",
+                    "exchangeTimestamp": record["timestamp"],
+                    "delaySeconds": record["delaySeconds"],
+                }
+            else:
+                tick_response = await upstream_get(
+                    "/api/v1/market-data/recent-ticks",
+                    {"symbols": sample_symbol, "seconds": 5},
+                )
+                tick_payload = unwrap_json(tick_response.json())
+                ticks = tick_payload.get("ticks", []) if isinstance(tick_payload, dict) else []
+                candidates = []
+                for tick in ticks:
+                    if not isinstance(tick, dict):
+                        continue
+                    tick_symbol = str(tick.get("symbol", "")).strip().upper()
+                    tick_ts = normalize_timestamp(tick.get("timestampMs", tick.get("timestamp")))
+                    try:
+                        tick_price = float(tick.get("price", 0))
+                    except (TypeError, ValueError):
+                        tick_price = 0.0
+                    if tick_symbol == sample_symbol and tick_price > 0 and tick_ts > 0:
+                        candidates.append((tick_ts, tick_price))
+                if candidates:
+                    tick_ts, _ = max(candidates, key=lambda item: item[0])
+                    live, delay = freshness(tick_ts)
+                    if live:
+                        quote = {"ok": True, "code": "NONE", "message": "BIST quote recent-ticks üzerinden güncel.", "exchangeTimestamp": tick_ts, "delaySeconds": delay}
+                    else:
+                        quote = {"ok": False, "code": "STALE_DATA", "message": f"Upstream quote güncel değil (age={record.get('delaySeconds')}s); recent tick de güncel değil.", "exchangeTimestamp": record.get("timestamp"), "delaySeconds": record.get("delaySeconds")}
+                else:
+                    quote = {"ok": False, "code": "STALE_DATA", "message": f"Upstream quote güncel değil (age={record.get('delaySeconds')}s); recent tick bulunamadı.", "exchangeTimestamp": record.get("timestamp"), "delaySeconds": record.get("delaySeconds")}
+        except HTTPException as exc:
+            quote = {"ok": False, "code": "STALE_DATA" if "recent-tick" in str(exc.detail).lower() else "QUOTE_ERROR", "message": str(exc.detail)}
+        except Exception as exc:
+            quote = {"ok": False, "code": "QUOTE_ERROR", "message": str(exc)}
+
+    analysis_mode = (
+        "REALTIME"
+        if quote["ok"] and history["ok"]
+        else "DELAYED_ANALYSIS_AVAILABLE"
+        if history["ok"] and quote.get("code") == "STALE_DATA"
+        else "UNAVAILABLE"
+    )
+    ok = bool(authentication["ok"] and symbols["ok"] and history["ok"] and (quote["ok"] or analysis_mode == "DELAYED_ANALYSIS_AVAILABLE"))
+    return {
+        "ok": ok,
+        "provider": "TradeWize",
+        "authentication": authentication,
+        "symbols": symbols,
+        "quote": quote,
+        "history": history,
+        "symbolCount": symbol_count,
+        "sampleSymbol": sample_symbol,
+        "analysisMode": analysis_mode,
+        "serverTime": started,
+        "elapsedMs": int(time.time() * 1000) - started,
     }
 
 
