@@ -243,6 +243,56 @@ async def bist_quote(symbol: str, authorization: str | None = Header(default=Non
     if normalized["timestamp"] <= 0:
         raise HTTPException(status_code=503, detail="BIST_QUOTE_ERROR: Fiyat zaman damgası yok.")
 
+    # TradeWize son-fiyat kaydı, olayın gerçek zaman damgasını korur ve eski
+    # fiyatları da döndürebilir. Uygulamanın quote sözleşmesi ise karar fiyatı
+    # için güncel/seans içi veri ister. Eski kayıt varsa, son 1-5 saniyelik
+    # gerçek fiyat olaylarından en yeni tick'i kullanıyoruz. Bu değer "last
+    # price" ile aynı semantiğe sahiptir; açık mum kapanışını quote diye
+    # göstermiyoruz.
+    if not normalized["realtime"]:
+        tick_response = await upstream_get(
+            "/api/v1/market-data/recent-ticks",
+            {"symbols": safe, "seconds": 5},
+        )
+        tick_payload = unwrap_json(tick_response.json())
+        ticks = tick_payload.get("ticks", []) if isinstance(tick_payload, dict) else []
+        candidates = []
+        for tick in ticks:
+            if not isinstance(tick, dict):
+                continue
+            tick_symbol = str(tick.get("symbol", "")).strip().upper()
+            try:
+                tick_price = float(tick.get("price", 0))
+                tick_ts = normalize_timestamp(tick.get("timestampMs", tick.get("timestamp")))
+            except (TypeError, ValueError):
+                continue
+            if tick_symbol == safe and tick_price > 0 and tick_ts > 0:
+                candidates.append((tick_ts, tick_price))
+        if candidates:
+            tick_ts, tick_price = max(candidates, key=lambda item: item[0])
+            tick_realtime, tick_delay = freshness(tick_ts)
+            if tick_realtime:
+                return {
+                    "symbol": safe,
+                    "price": tick_price,
+                    "exchangeTimestamp": tick_ts,
+                    "receivedAt": int(time.time() * 1000),
+                    "source": "TradeWize/recent-ticks",
+                    "realtime": True,
+                    "delaySeconds": tick_delay,
+                    "currentSessionIncluded": True,
+                    "providerReady": True,
+                }
+
+        age_seconds = normalized["delaySeconds"]
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "BIST_QUOTE_ERROR: Upstream quote is not live/current-session "
+                f"(age={age_seconds}s); recent tick bulunamadı."
+            ),
+        )
+
     return {
         "symbol": safe,
         "price": normalized["price"],
