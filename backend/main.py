@@ -257,6 +257,9 @@ async def bist_quote(symbol: str, authorization: str | None = Header(default=Non
 
 
 
+_viop_cache: dict[str, Any] = {"at": 0.0, "items": []}
+
+
 async def discover_viop_quotes(force: bool = False) -> list[dict[str, Any]]:
     response = await upstream_get(
         "/api/v1/market-data/viop/last-price/details",
@@ -278,7 +281,9 @@ async def discover_viop_quotes(force: bool = False) -> list[dict[str, Any]]:
             "underlying": symbol.upper(),
         })
     items.sort(key=lambda x: x["symbol"])
-    return items
+    _viop_cache["at"] = time.time()
+    _viop_cache["items"] = items
+    return list(items)
 
 
 async def provider_capabilities(force: bool = False) -> dict[str, Any]:
@@ -516,6 +521,13 @@ def scanner_symbols(raw: str | None, market: str = "BIST", offset: int = 0, limi
         candidates = requested.split(",")
     elif market == "BIST":
         candidates = [x["symbol"] for x in _bist_cache.get("items", []) if isinstance(x, dict)]
+    elif market == "VIOP":
+        candidates = [x["symbol"] for x in _viop_cache.get("items", []) if isinstance(x, dict)]
+    elif market == "ALL":
+        candidates = (
+            [x["symbol"] for x in _bist_cache.get("items", []) if isinstance(x, dict)]
+            + [x["symbol"] for x in _viop_cache.get("items", []) if isinstance(x, dict)]
+        )
     else:
         candidates = SCANNER_SYMBOLS.split(",") if SCANNER_SYMBOLS else []
 
@@ -708,10 +720,10 @@ async def scanner_opportunities(
     if market == "BIST":
         await discover_bist_quotes()
     elif market == "VIOP":
-        viop_universe = await discover_viop_quotes()
-        _bist_cache["items"] = viop_universe
+        await discover_viop_quotes()
     elif market == "ALL":
         await discover_bist_quotes()
+        await discover_viop_quotes()
 
     requested, remaining = scanner_symbols(
         symbols,
@@ -769,7 +781,13 @@ async def scanner_opportunities(
         "source": "TradeWize",
         "receivedAt": int(time.time() * 1000),
         "scannedSymbols": len(requested),
-        "universeCount": len(_bist_cache.get("items", [])) if market in {"BIST", "ALL"} else len(requested) + remaining,
+        "universeCount": (
+            len(_bist_cache.get("items", [])) + len(_viop_cache.get("items", []))
+            if market == "ALL"
+            else len(_bist_cache.get("items", []))
+            if market == "BIST"
+            else len(_viop_cache.get("items", []))
+        ),
         "returnedCount": len(opportunities),
         "remainingSymbols": remaining,
         "coverageComplete": remaining == 0,
