@@ -380,13 +380,13 @@ async def provider_capabilities(force: bool = False) -> dict[str, Any]:
         result["errors"].append({"market": "BIST", "reason": str(exc.detail)})
 
     try:
-        viop = await discover_viop_quotes()
-        viop_usable = viop
-        viop_live = [x for x in viop if x["realtime"]]
+        viop = await discover_viop_quotes(force=force)
+        viop_usable = [x for x in viop if float(x.get("price", 0) or 0) > 0]
+        viop_live = [x for x in viop_usable if x.get("realtime")]
         result["markets"]["VIOP"] = {
             "supported": True,
             "discovery": True,
-            "symbolCount": len(viop_records),
+            "symbolCount": len(viop),
             "usableCount": len(viop_usable),
             "liveCount": len(viop_live),
             "realtime": bool(viop_live),
@@ -423,6 +423,51 @@ async def provider_capabilities_endpoint(
     return await provider_capabilities(force=force)
 
 
+def parse_standard_viop_future_symbol(symbol: str) -> dict[str, Any] | None:
+    """Parse standard Borsa İstanbul VİOP futures codes such as F_XU0300926."""
+    import re
+    safe = symbol.strip().upper()
+    match = re.fullmatch(r"F_(?P<underlying>[A-Z0-9_.-]+?)(?P<month>0[1-9]|1[0-2])(?P<year>\\d{2})", safe)
+    if not match:
+        return None
+
+    underlying = match.group("underlying")
+    month = int(match.group("month"))
+    year = 2000 + int(match.group("year"))
+
+    import calendar
+    from datetime import date, time as dt_time
+    from zoneinfo import ZoneInfo
+
+    last_day = calendar.monthrange(year, month)[1]
+    maturity_date = date(year, month, last_day)
+    while maturity_date.weekday() >= 5:
+        maturity_date = date.fromordinal(maturity_date.toordinal() - 1)
+
+    expiry_at = int(
+        datetime.combine(
+            maturity_date,
+            dt_time(18, 10),
+            tzinfo=ZoneInfo("Europe/Istanbul"),
+        ).timestamp() * 1000
+    )
+
+    # BIST 30 index futures: minimum price step 1.00 TL and each
+    # standard contract represents 10 units of the underlying index.
+    tick_size = 1.0 if underlying == "XU030" else None
+    multiplier = 10.0 if underlying == "XU030" else None
+
+    return {
+        "underlying": underlying,
+        "expiry": f"{year:04d}-{month:02d}",
+        "contractType": "FUTURE",
+        "lastTradingAt": expiry_at,
+        "expiryAt": expiry_at,
+        "tickSize": tick_size,
+        "multiplier": multiplier,
+    }
+
+
 @app.get("/v1/viop/contracts")
 async def viop_contracts(authorization: str | None = Header(default=None)):
     require_app_auth(authorization)
@@ -438,17 +483,23 @@ async def viop_contracts(authorization: str | None = Header(default=None)):
         normalized = extract_price_record(symbol, record)
         if normalized["price"] <= 0:
             continue
+
+        metadata = parse_standard_viop_future_symbol(symbol)
+        if metadata is None:
+            # Do not invent metadata for options/strategies/non-standard codes.
+            continue
+
         items.append({
             "symbol": normalized["symbol"],
-            "underlying": "",
-            "expiry": "",
-            "contractType": "VİOP",
+            "underlying": metadata["underlying"],
+            "expiry": metadata["expiry"],
+            "contractType": metadata["contractType"],
             "lastPrice": normalized["price"],
             "bid": None,
             "ask": None,
             "dailyChangePct": None,
-            "tickSize": None,
-            "multiplier": None,
+            "tickSize": metadata["tickSize"],
+            "multiplier": metadata["multiplier"],
             "openInterest": None,
             "volume": None,
             "liquidity": None,
@@ -459,6 +510,8 @@ async def viop_contracts(authorization: str | None = Header(default=None)):
             "realtime": normalized["realtime"],
             "delaySeconds": normalized["delaySeconds"],
             "currentSessionIncluded": normalized["currentSessionIncluded"],
+            "lastTradingAt": metadata["lastTradingAt"],
+            "expiryAt": metadata["expiryAt"],
         })
     return {"items": items, "receivedAt": int(time.time() * 1000)}
 
