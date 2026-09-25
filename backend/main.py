@@ -423,11 +423,70 @@ async def provider_capabilities_endpoint(
     return await provider_capabilities(force=force)
 
 
-def parse_standard_viop_future_symbol(symbol: str) -> dict[str, Any] | None:
+def _single_stock_tick(price: float) -> float | None:
+    # Borsa İstanbul VİOP pay futures use price-level dependent minimum
+    # ticks. Standard contract size is 100 shares.
+    if price <= 0:
+        return None
+    if price < 100:
+        return 0.01
+    if price < 500:
+        return 0.05
+    if price < 1000:
+        return 0.10
+    if price < 2500:
+        return 0.25
+    return 0.50
+
+
+def _viop_future_spec(underlying: str, price: float) -> tuple[float | None, float | None]:
+    # Official Borsa İstanbul contract specifications. Do not infer a
+    # multiplier/tick for an unknown product family.
+    index_specs = {
+        "XU030": (1.0, 10.0),
+        "XLBNK": (1.0, 10.0),
+        "X10XB": (1.0, 10.0),
+        "XSD25": (1.0, 10.0),
+    }
+    currency_specs = {
+        "USDTRY": (0.0010, 1000.0),
+        "EURTRY": (0.0010, 1000.0),
+        "EURUSD": (0.0001, 1000.0),
+        "GBPUSD": (0.0001, 1000.0),
+        "RUBTRY": (0.00001, 100000.0),
+        "CNYTRY": (0.0001, 10000.0),
+    }
+    metal_specs = {
+        "XAUTRY": (0.10, 1.0),
+        "XAUUSD": (0.10, 1.0),
+        "XAGUSD": (0.010, 10.0),
+        "XPDUSD": (0.10, 1.0),
+        "XPTUSD": (0.10, 1.0),
+        "XCUUSD": (0.50, 0.1),
+    }
+    if underlying in index_specs:
+        return index_specs[underlying]
+    if underlying in currency_specs:
+        return currency_specs[underlying]
+    if underlying in metal_specs:
+        return metal_specs[underlying]
+
+    # Standard single-stock futures.
+    if underlying.isalnum() and 3 <= len(underlying) <= 6:
+        tick = _single_stock_tick(price)
+        if tick is not None:
+            return tick, 100.0
+    return None, None
+
+
+def parse_standard_viop_future_symbol(symbol: str, price: float = 0.0) -> dict[str, Any] | None:
     """Parse standard Borsa İstanbul VİOP futures codes such as F_XU0300926."""
     import re
     safe = symbol.strip().upper()
-    match = re.fullmatch(r"F_(?P<underlying>[A-Z0-9_.-]+?)(?P<month>0[1-9]|1[0-2])(?P<year>\\d{2})", safe)
+    match = re.fullmatch(
+        r"F_(?:(?P<physical>P)_)?(?P<underlying>[A-Z0-9_.-]+?)(?P<month>0[1-9]|1[0-2])(?P<year>\d{2})",
+        safe,
+    )
     if not match:
         return None
 
@@ -452,10 +511,9 @@ def parse_standard_viop_future_symbol(symbol: str) -> dict[str, Any] | None:
         ).timestamp() * 1000
     )
 
-    # BIST 30 index futures: minimum price step 1.00 TL and each
-    # standard contract represents 10 units of the underlying index.
-    tick_size = 1.0 if underlying == "XU030" else None
-    multiplier = 10.0 if underlying == "XU030" else None
+    tick_size, multiplier = _viop_future_spec(underlying, float(price or 0.0))
+    if tick_size is None or multiplier is None:
+        return None
 
     return {
         "underlying": underlying,
@@ -465,6 +523,7 @@ def parse_standard_viop_future_symbol(symbol: str) -> dict[str, Any] | None:
         "expiryAt": expiry_at,
         "tickSize": tick_size,
         "multiplier": multiplier,
+        "settlementType": "PHYSICAL" if match.group("physical") else None,
     }
 
 
@@ -484,7 +543,7 @@ async def viop_contracts(authorization: str | None = Header(default=None)):
         if normalized["price"] <= 0:
             continue
 
-        metadata = parse_standard_viop_future_symbol(symbol)
+        metadata = parse_standard_viop_future_symbol(symbol, normalized["price"])
         if metadata is None:
             # Do not invent metadata for options/strategies/non-standard codes.
             continue
@@ -512,8 +571,9 @@ async def viop_contracts(authorization: str | None = Header(default=None)):
             "currentSessionIncluded": normalized["currentSessionIncluded"],
             "lastTradingAt": metadata["lastTradingAt"],
             "expiryAt": metadata["expiryAt"],
+            "settlementType": metadata.get("settlementType"),
         })
-    return {"items": items, "receivedAt": int(time.time() * 1000)}
+    return {"items": items, "receivedAt": int(time.time() * 1000), "count": len(items)}
 
 
 @app.get("/v1/viop/quote/{symbol}")
